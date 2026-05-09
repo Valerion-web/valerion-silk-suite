@@ -2,7 +2,7 @@ import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Heart, Truck, Shield, RotateCcw, Star, Plus, Minus } from "lucide-react";
-import { findProduct, products, productColors } from "@/lib/products";
+import { findProduct, products } from "@/lib/products";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PageShell } from "@/components/site/PageShell";
 
