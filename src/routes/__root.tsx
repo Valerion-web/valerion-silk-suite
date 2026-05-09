@@ -80,6 +80,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "House of Valerion — Luxury Menswear" },
+      { name: "twitter:description", content: "Crafted for modern gentlemen who value timeless elegance, confidence and refined sophistication." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/83d56dc8-f46f-4182-bea5-ad67371d861e/id-preview-f48b99ae--131d706f-f2ad-4d87-8c25-bd7351aec75c.lovable.app-1778333948321.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/83d56dc8-f46f-4182-bea5-ad67371d861e/id-preview-f48b99ae--131d706f-f2ad-4d87-8c25-bd7351aec75c.lovable.app-1778333948321.png" },
     ],
     links: [
       {
