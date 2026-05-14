@@ -31,151 +31,42 @@ function Index() {
 function Hero() {
   const ref = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end start"] });
-  const yBg = useTransform(scrollYProgress, [0, 1], ["0%", "18%"]);
-  const yMid = useTransform(scrollYProgress, [0, 1], ["0%", "32%"]);
-  const yFog = useTransform(scrollYProgress, [0, 1], ["0%", "12%"]);
-  const yContent = useTransform(scrollYProgress, [0, 1], ["0%", "55%"]);
-  const opacity = useTransform(scrollYProgress, [0, 0.85], [1, 0]);
-  const heroScale = useTransform(scrollYProgress, [0, 1], [1, 1.06]);
-
-  const particles = useRef(
-    Array.from({ length: 28 }, (_, i) => ({
-      id: i,
-      left: Math.random() * 100,
-      bottom: -10 - Math.random() * 20,
-      size: 1.5 + Math.random() * 3.5,
-      duration: 12 + Math.random() * 14,
-      delay: -Math.random() * 20,
-      drift: -30 + Math.random() * 60,
-    }))
-  ).current;
-
-  const title = "HOUSE OF VALERION";
+  const y = useTransform(scrollYProgress, [0, 1], ["0%", "30%"]);
+  const opacity = useTransform(scrollYProgress, [0, 1], [1, 0]);
 
   return (
-    <section ref={ref} className="relative h-screen min-h-[760px] w-full overflow-hidden bg-midnight">
-      {/* Slow navy gradient waves */}
-      <div className="absolute inset-0 bg-midnight">
-        <div className="navy-wave" />
-        <div className="navy-wave delay" />
-      </div>
-
-      {/* Drifting smoke / fog */}
-      <motion.div style={{ y: yFog }} className="absolute inset-0">
-        <div className="smoke-fog" />
+    <section ref={ref} className="relative h-screen min-h-[720px] w-full overflow-hidden bg-midnight">
+      <motion.div style={{ y }} className="absolute inset-0">
+        <img src={heroImg} alt="Luxury menswear hero" className="h-full w-full object-cover" fetchPriority="high" />
       </motion.div>
+      <div className="absolute inset-0 bg-gradient-to-b from-midnight/60 via-midnight/20 to-midnight" />
+      <div className="absolute inset-0 bg-radial-gold opacity-40" />
+      <div className="film-grain absolute inset-0" />
 
-      {/* Hero image — breathing zoom + parallax + studio light */}
-      <motion.div style={{ y: yBg, scale: heroScale }} className="absolute inset-0">
-        <div className="hero-breathe absolute inset-0">
-          <img
-            src={heroImg}
-            alt="House of Valerion luxury menswear hero"
-            fetchPriority="high"
-            className="h-full w-full object-cover object-center"
-          />
-        </div>
-        <motion.div
-          aria-hidden
-          className="absolute inset-0"
-          animate={{
-            background: [
-              "radial-gradient(circle at 30% 35%, oklch(0.95 0.05 85 / 0.18), transparent 45%)",
-              "radial-gradient(circle at 60% 30%, oklch(0.95 0.05 85 / 0.22), transparent 45%)",
-              "radial-gradient(circle at 45% 50%, oklch(0.95 0.05 85 / 0.14), transparent 45%)",
-              "radial-gradient(circle at 30% 35%, oklch(0.95 0.05 85 / 0.18), transparent 45%)",
-            ],
-          }}
-          transition={{ duration: 12, repeat: Infinity, ease: "easeInOut" }}
-        />
-        <div className="light-sweep" />
-        <motion.div
-          aria-hidden
-          className="absolute inset-0 mix-blend-soft-light"
-          animate={{ opacity: [0.35, 0.6, 0.35] }}
-          transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
-          style={{
-            background:
-              "radial-gradient(ellipse 40% 25% at 42% 38%, oklch(1 0 0 / 0.5), transparent 70%)",
-          }}
-        />
-      </motion.div>
-
-      {/* Ground shadow */}
-      <motion.div style={{ y: yMid }} className="absolute inset-0 pointer-events-none">
-        <div className="ground-shadow" />
-      </motion.div>
-
-      <div className="absolute inset-0 bg-gradient-to-b from-midnight/55 via-midnight/15 to-midnight pointer-events-none" />
-      <div className="absolute inset-0 bg-radial-gold opacity-30 pointer-events-none" />
-
-      {/* Floating gold dust */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        {particles.map((p) => (
-          <span
-            key={p.id}
-            className="gold-particle"
-            style={
-              {
-                left: `${p.left}%`,
-                bottom: `${p.bottom}%`,
-                ["--s" as string]: `${p.size}px`,
-                ["--d" as string]: `${p.duration}s`,
-                ["--delay" as string]: `${p.delay}s`,
-                ["--dx" as string]: `${p.drift}px`,
-              } as React.CSSProperties
-            }
-          />
-        ))}
-      </div>
-
-      <div className="film-grain absolute inset-0 pointer-events-none" />
-      <div className="vignette" />
-
-      <motion.div
-        style={{ opacity, y: yContent }}
-        className="relative z-10 h-full flex flex-col items-center justify-center text-center px-6"
-      >
+      <motion.div style={{ opacity }} className="relative z-10 h-full flex flex-col items-center justify-center text-center px-6">
         <motion.p
-          initial={{ opacity: 0, y: 18, filter: "blur(8px)" }}
-          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-          transition={{ duration: 1.2, delay: 0.4, ease: [0.22, 1, 0.36, 1] }}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 1, delay: 0.4 }}
           className="text-[10px] md:text-xs tracking-wider-luxury uppercase text-gold mb-8"
         >
-          — Autumn Atelier · MMXXVI —
+          — House of Valerion · Autumn Atelier MMXXVI —
         </motion.p>
 
-        <h1 className="font-display text-frost text-5xl md:text-7xl lg:text-[7.5rem] leading-[0.95] max-w-6xl">
-          <span className="sr-only">{title}</span>
-          <motion.span
-            aria-hidden
-            initial="hidden"
-            animate="visible"
-            transition={{ staggerChildren: 0.045, delayChildren: 0.6 }}
-            className="text-shimmer-gold inline-block"
-            style={{ letterSpacing: "0.02em" }}
-          >
-            {title.split("").map((ch, i) => (
-              <motion.span
-                key={i}
-                variants={{
-                  hidden: { opacity: 0, y: 40, filter: "blur(12px)" },
-                  visible: { opacity: 1, y: 0, filter: "blur(0px)" },
-                }}
-                transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1] }}
-                className="inline-block"
-              >
-                {ch === " " ? "\u00A0" : ch}
-              </motion.span>
-            ))}
-          </motion.span>
-        </h1>
+        <motion.h1
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 1.2, delay: 0.6, ease: [0.22, 1, 0.36, 1] }}
+          className="font-display text-frost text-5xl md:text-7xl lg:text-8xl leading-[1] max-w-5xl"
+        >
+          The Art of <em className="text-gradient-gold not-italic font-serif">Luxury</em> Menswear
+        </motion.h1>
 
         <motion.p
-          initial={{ opacity: 0, y: 24, filter: "blur(10px)" }}
-          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-          transition={{ duration: 1.4, delay: 1.4, ease: [0.22, 1, 0.36, 1] }}
-          className="mt-10 max-w-xl font-serif italic text-frost/85 text-lg md:text-xl"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 1, delay: 1.2 }}
+          className="mt-8 max-w-xl font-serif italic text-frost/80 text-lg md:text-xl"
         >
           Crafted for modern gentlemen who value timeless elegance, confidence, and refined sophistication.
         </motion.p>
@@ -183,19 +74,19 @@ function Hero() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.9, delay: 1.9 }}
+          transition={{ duration: 0.8, delay: 1.5 }}
           className="mt-12 flex flex-col sm:flex-row gap-4"
         >
           <Link
             to="/shop"
-            className="hero-cta-glow group inline-flex items-center justify-center gap-3 bg-frost text-midnight px-9 py-4 text-[11px] tracking-luxury uppercase font-medium hover:bg-gold transition-colors duration-500"
+            className="group inline-flex items-center justify-center gap-3 bg-frost text-midnight px-9 py-4 text-[11px] tracking-luxury uppercase font-medium hover:bg-gold transition-colors duration-500"
           >
             Explore Collection
             <ArrowRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
           </Link>
           <Link
             to="/shop"
-            className="hero-cta-glow inline-flex items-center justify-center gap-3 border border-frost/40 text-frost px-9 py-4 text-[11px] tracking-luxury uppercase font-medium hover:border-gold hover:text-gold transition-colors duration-500"
+            className="inline-flex items-center justify-center gap-3 border border-frost/40 text-frost px-9 py-4 text-[11px] tracking-luxury uppercase font-medium hover:border-gold hover:text-gold transition-colors duration-500"
           >
             New Arrivals
           </Link>
@@ -204,15 +95,11 @@ function Hero() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 1, delay: 2.4 }}
+          transition={{ duration: 1, delay: 2 }}
           className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
         >
           <span className="text-[9px] tracking-luxury uppercase text-frost/60">Scroll</span>
-          <motion.div
-            animate={{ y: [0, 10, 0], opacity: [0.4, 1, 0.4] }}
-            transition={{ repeat: Infinity, duration: 2.4, ease: "easeInOut" }}
-            className="h-12 w-px bg-gradient-to-b from-gold/80 to-transparent"
-          />
+          <motion.div animate={{ y: [0, 8, 0] }} transition={{ repeat: Infinity, duration: 1.8 }} className="h-10 w-px bg-frost/40" />
         </motion.div>
       </motion.div>
     </section>
