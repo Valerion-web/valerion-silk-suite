@@ -17,6 +17,7 @@ import {
 import { findProduct, products } from "@/lib/products";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PageShell } from "@/components/site/PageShell";
+import { SizeGuide } from "@/components/site/SizeGuide";
 
 export const Route = createFileRoute("/product/$productId")({
   component: ProductPage,
@@ -48,6 +49,7 @@ function ProductPage() {
   ];
   const [activeImg, setActiveImg] = useState(0);
   const [size, setSize] = useState<string | null>(null);
+  const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
   const [color, setColor] = useState(product.colors[0]);
   const [qty, setQty] = useState(1);
   const [zoomPos, setZoomPos] = useState<{ x: number; y: number } | null>(null);
@@ -211,7 +213,10 @@ function ProductPage() {
             <div className="mt-8">
               <div className="flex items-center justify-between mb-4">
                 <p className="text-[11px] tracking-luxury uppercase">Size</p>
-                <button className="inline-flex items-center gap-1.5 text-[10px] tracking-luxury uppercase text-gold link-underline">
+                <button
+                  onClick={() => setSizeGuideOpen(true)}
+                  className="inline-flex items-center gap-1.5 text-[10px] tracking-luxury uppercase text-gold link-underline"
+                >
                   <Ruler className="h-3 w-3" /> Size Guide
                 </button>
               </div>
@@ -379,6 +384,7 @@ function ProductPage() {
           </section>
         )}
       </div>
+      <SizeGuide open={sizeGuideOpen} onOpenChange={setSizeGuideOpen} />
     </PageShell>
   );
 }
