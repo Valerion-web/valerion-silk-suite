@@ -384,6 +384,7 @@ function ProductPage() {
           </section>
         )}
       </div>
+      <SizeGuide open={sizeGuideOpen} onOpenChange={setSizeGuideOpen} />
     </PageShell>
   );
 }
