@@ -213,7 +213,10 @@ function ProductPage() {
             <div className="mt-8">
               <div className="flex items-center justify-between mb-4">
                 <p className="text-[11px] tracking-luxury uppercase">Size</p>
-                <button className="inline-flex items-center gap-1.5 text-[10px] tracking-luxury uppercase text-gold link-underline">
+                <button
+                  onClick={() => setSizeGuideOpen(true)}
+                  className="inline-flex items-center gap-1.5 text-[10px] tracking-luxury uppercase text-gold link-underline"
+                >
                   <Ruler className="h-3 w-3" /> Size Guide
                 </button>
               </div>
