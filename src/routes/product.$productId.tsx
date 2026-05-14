@@ -17,6 +17,7 @@ import {
 import { findProduct, products } from "@/lib/products";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PageShell } from "@/components/site/PageShell";
+import { SizeGuide } from "@/components/site/SizeGuide";
 
 export const Route = createFileRoute("/product/$productId")({
   component: ProductPage,
