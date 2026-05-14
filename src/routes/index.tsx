@@ -16,7 +16,7 @@ export const Route = createFileRoute("/")({
 function Index() {
   return (
     <>
-      <Hero />
+      <CinematicHero />
       <FeaturedCollections />
       <NewArrivals />
       <BrandStory />
