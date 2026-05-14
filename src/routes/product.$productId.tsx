@@ -49,6 +49,7 @@ function ProductPage() {
   ];
   const [activeImg, setActiveImg] = useState(0);
   const [size, setSize] = useState<string | null>(null);
+  const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
   const [color, setColor] = useState(product.colors[0]);
   const [qty, setQty] = useState(1);
   const [zoomPos, setZoomPos] = useState<{ x: number; y: number } | null>(null);
