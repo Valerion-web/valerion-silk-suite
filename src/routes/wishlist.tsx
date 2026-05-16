@@ -1,15 +1,20 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Heart, X, ShoppingBag } from "lucide-react";
-import { products } from "@/lib/products";
+import { findProduct } from "@/lib/products";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
 import { motion } from "framer-motion";
+import { useShop } from "@/lib/store";
 
 export const Route = createFileRoute("/wishlist")({
   component: WishlistPage,
 });
 
 function WishlistPage() {
-  const items = products.slice(0, 3);
+  const { wishlist, removeFromWishlist, addToCart } = useShop();
+  const items = wishlist
+    .map((w) => findProduct(w.id))
+    .filter(Boolean) as NonNullable<ReturnType<typeof findProduct>>[];
+
   return (
     <>
       <PageHeader eyebrow="Saved" title="Your Wishlist" subtitle="Pieces awaiting their moment in your wardrobe." />
@@ -27,7 +32,11 @@ function WishlistPage() {
                   transition={{ duration: 0.6, delay: i * 0.08 }}
                   className="group relative bg-card shadow-card overflow-hidden"
                 >
-                  <button className="absolute top-4 right-4 z-10 h-9 w-9 grid place-items-center bg-frost/95 text-midnight hover:bg-gold transition-colors" aria-label="Remove">
+                  <button
+                    onClick={() => removeFromWishlist(p.id)}
+                    className="absolute top-4 right-4 z-10 h-9 w-9 grid place-items-center bg-frost/95 text-midnight hover:bg-gold transition-colors"
+                    aria-label="Remove"
+                  >
                     <X className="h-4 w-4" />
                   </button>
                   <Link to="/product/$productId" params={{ productId: p.id }} className="block aspect-[3/4] overflow-hidden hover-zoom-parent">
@@ -38,8 +47,14 @@ function WishlistPage() {
                     <h3 className="font-display text-xl mt-1">{p.name}</h3>
                     <div className="mt-4 flex items-center justify-between">
                       <p className="font-serif text-lg">${p.price.toLocaleString()}</p>
-                      <button className="inline-flex items-center gap-2 bg-midnight text-frost text-[10px] tracking-luxury uppercase px-4 py-2 hover:bg-gold hover:text-midnight transition-colors">
-                        <ShoppingBag className="h-3 w-3" /> Add to Bag
+                      <button
+                        onClick={() => {
+                          addToCart({ id: p.id, qty: 1, size: p.sizes[0], color: p.colors[0] }, p.name);
+                          removeFromWishlist(p.id);
+                        }}
+                        className="inline-flex items-center gap-2 bg-midnight text-frost text-[10px] tracking-luxury uppercase px-4 py-2 hover:bg-gold hover:text-midnight transition-colors"
+                      >
+                        <ShoppingBag className="h-3 w-3" /> Move to Bag
                       </button>
                     </div>
                   </div>
