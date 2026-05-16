@@ -2,8 +2,27 @@ import { motion } from "framer-motion";
 import { Link } from "@tanstack/react-router";
 import { Heart, Eye } from "lucide-react";
 import type { Product } from "@/lib/products";
+import { useShop } from "@/lib/store";
 
 export function ProductCard({ product, index = 0 }: { product: Product; index?: number }) {
+  const { toggleWishlist, inWishlist, addToCart } = useShop();
+  const wished = inWishlist(product.id);
+
+  const handleWishlist = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleWishlist(product.id, product.name);
+  };
+
+  const handleAddToBag = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    addToCart(
+      { id: product.id, qty: 1, size: product.sizes[0], color: product.colors[0] },
+      product.name,
+    );
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 30 }}
@@ -37,17 +56,25 @@ export function ProductCard({ product, index = 0 }: { product: Product; index?: 
           )}
 
           <div className="absolute top-4 right-4 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-500">
-            <button className="h-9 w-9 grid place-items-center bg-frost/95 text-midnight hover:bg-gold transition-colors" aria-label="Wishlist">
-              <Heart className="h-4 w-4" />
-            </button>
+            <motion.button
+              whileTap={{ scale: 0.85 }}
+              onClick={handleWishlist}
+              className={`h-9 w-9 grid place-items-center transition-colors ${wished ? "bg-gold text-midnight" : "bg-frost/95 text-midnight hover:bg-gold"}`}
+              aria-label="Wishlist"
+            >
+              <Heart className={`h-4 w-4 ${wished ? "fill-current" : ""}`} />
+            </motion.button>
             <button className="h-9 w-9 grid place-items-center bg-frost/95 text-midnight hover:bg-gold transition-colors" aria-label="Quick view">
               <Eye className="h-4 w-4" />
             </button>
           </div>
 
-          <div className="absolute bottom-0 inset-x-0 translate-y-full group-hover:translate-y-0 transition-transform duration-500 ease-out bg-midnight text-frost text-[11px] tracking-luxury uppercase text-center py-3">
+          <button
+            onClick={handleAddToBag}
+            className="absolute bottom-0 inset-x-0 translate-y-full group-hover:translate-y-0 transition-transform duration-500 ease-out bg-midnight text-frost text-[11px] tracking-luxury uppercase text-center py-3 hover:bg-gold hover:text-midnight"
+          >
             Add to Bag
-          </div>
+          </button>
         </div>
 
         <div className="mt-5 flex items-start justify-between gap-4">
