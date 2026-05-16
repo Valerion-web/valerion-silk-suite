@@ -114,19 +114,36 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 import { Navbar } from "@/components/site/Navbar";
 import { Footer } from "@/components/site/Footer";
+import { ShopProvider } from "@/lib/store";
+import { Toaster } from "@/components/ui/sonner";
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
   return (
     <QueryClientProvider client={queryClient}>
-      <div className="min-h-screen flex flex-col bg-background">
-        <Navbar />
-        <div className="flex-1">
-          <Outlet />
+      <ShopProvider>
+        <div className="min-h-screen flex flex-col bg-background">
+          <Navbar />
+          <div className="flex-1">
+            <Outlet />
+          </div>
+          <Footer />
         </div>
-        <Footer />
-      </div>
+        <Toaster
+          position="top-center"
+          theme="dark"
+          toastOptions={{
+            classNames: {
+              toast:
+                "luxury-toast !bg-midnight !text-frost !border !border-gold/40 !shadow-[0_0_40px_rgba(212,175,55,0.35)] !rounded-none !px-6 !py-4 !font-serif",
+              title: "!text-frost !tracking-[0.18em] !text-[11px] !uppercase !font-sans",
+              description: "!text-frost/70 !font-serif !italic !text-sm",
+              icon: "!text-gold",
+            },
+          }}
+        />
+      </ShopProvider>
     </QueryClientProvider>
   );
 }
