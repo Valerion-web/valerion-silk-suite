@@ -1,29 +1,24 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Plus, Minus, X, ArrowRight } from "lucide-react";
-import { products } from "@/lib/products";
+import { findProduct } from "@/lib/products";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
+import { useShop } from "@/lib/store";
 
 export const Route = createFileRoute("/cart")({
   component: CartPage,
 });
 
-type Item = { id: string; qty: number; size: string };
-const initial: Item[] = [
-  { id: products[0].id, qty: 1, size: "50" },
-  { id: products[4].id, qty: 2, size: "M" },
-];
-
 function CartPage() {
-  const [items, setItems] = useState(initial);
+  const { cart, updateQty, removeFromCart } = useShop();
+  const navigate = useNavigate();
 
-  const lines = items.map((i) => ({ ...i, product: products.find((p) => p.id === i.id)! })).filter((l) => l.product);
+  const lines = cart
+    .map((i) => ({ ...i, product: findProduct(i.id) }))
+    .filter((l) => l.product) as Array<{ id: string; qty: number; size: string; color: string; product: NonNullable<ReturnType<typeof findProduct>> }>;
+
   const subtotal = lines.reduce((s, l) => s + l.product.price * l.qty, 0);
-  const shipping = subtotal > 0 ? 0 : 0;
+  const shipping = 0;
   const total = subtotal + shipping;
-
-  const update = (id: string, qty: number) => setItems((s) => s.map((i) => (i.id === id ? { ...i, qty: Math.max(1, qty) } : i)));
-  const remove = (id: string) => setItems((s) => s.filter((i) => i.id !== id));
 
   return (
     <>
@@ -41,7 +36,7 @@ function CartPage() {
             <div className="grid lg:grid-cols-[1fr_400px] gap-12">
               <div className="space-y-6">
                 {lines.map((l) => (
-                  <div key={l.id} className="glass-light flex gap-6 p-5">
+                  <div key={`${l.id}-${l.size}-${l.color}`} className="glass-light flex gap-6 p-5">
                     <Link to="/product/$productId" params={{ productId: l.id }} className="w-32 aspect-[3/4] shrink-0 overflow-hidden bg-muted">
                       <img src={l.product.image} alt={l.product.name} className="h-full w-full object-cover" />
                     </Link>
@@ -52,13 +47,13 @@ function CartPage() {
                           <h3 className="font-display text-xl mt-1">{l.product.name}</h3>
                           <p className="text-xs mt-2 text-muted-foreground">Size {l.size} · {l.product.fabric}</p>
                         </div>
-                        <button onClick={() => remove(l.id)} className="text-muted-foreground hover:text-destructive" aria-label="Remove"><X className="h-4 w-4" /></button>
+                        <button onClick={() => removeFromCart(l.id)} className="text-muted-foreground hover:text-destructive" aria-label="Remove"><X className="h-4 w-4" /></button>
                       </div>
                       <div className="mt-6 flex items-end justify-between">
                         <div className="flex items-center border border-border">
-                          <button onClick={() => update(l.id, l.qty - 1)} className="h-10 w-10 grid place-items-center hover:bg-muted"><Minus className="h-3 w-3" /></button>
+                          <button onClick={() => updateQty(l.id, l.qty - 1)} className="h-10 w-10 grid place-items-center hover:bg-muted"><Minus className="h-3 w-3" /></button>
                           <span className="w-10 text-center text-sm">{l.qty}</span>
-                          <button onClick={() => update(l.id, l.qty + 1)} className="h-10 w-10 grid place-items-center hover:bg-muted"><Plus className="h-3 w-3" /></button>
+                          <button onClick={() => updateQty(l.id, l.qty + 1)} className="h-10 w-10 grid place-items-center hover:bg-muted"><Plus className="h-3 w-3" /></button>
                         </div>
                         <p className="font-serif text-xl">${(l.product.price * l.qty).toLocaleString()}</p>
                       </div>
@@ -77,16 +72,19 @@ function CartPage() {
 
                 <div className="mt-8 space-y-3 text-sm">
                   <Row label="Subtotal" value={`$${subtotal.toLocaleString()}`} />
-                  <Row label="Shipping" value={shipping === 0 ? "Complimentary" : `$${shipping}`} />
+                  <Row label="Shipping" value="Complimentary" />
                   <Row label="Tax" value="Calculated at checkout" />
                 </div>
 
                 <div className="mt-6 pt-6 border-t border-border flex justify-between items-baseline">
                   <span className="text-[11px] tracking-luxury uppercase">Total</span>
-                  <span className="font-display text-3xl">${total.toLocaleString()}</span>
+                  <span className="font-display text-3xl text-gradient-gold">${total.toLocaleString()}</span>
                 </div>
 
-                <button className="mt-8 w-full bg-midnight text-frost py-4 text-[11px] tracking-luxury uppercase inline-flex items-center justify-center gap-2 hover:bg-gold hover:text-midnight transition-colors duration-500">
+                <button
+                  onClick={() => navigate({ to: "/checkout" })}
+                  className="mt-8 w-full bg-midnight text-frost py-4 text-[11px] tracking-luxury uppercase inline-flex items-center justify-center gap-2 hover:bg-gold hover:text-midnight transition-colors duration-500"
+                >
                   Proceed to Checkout <ArrowRight className="h-4 w-4" />
                 </button>
                 <p className="mt-4 text-[10px] tracking-luxury uppercase text-muted-foreground text-center">Secure · Discreet · Insured</p>

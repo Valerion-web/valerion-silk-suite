@@ -18,6 +18,8 @@ import { findProduct, products } from "@/lib/products";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PageShell } from "@/components/site/PageShell";
 import { SizeGuide } from "@/components/site/SizeGuide";
+import { useShop } from "@/lib/store";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/product/$productId")({
   component: ProductPage,
@@ -244,38 +246,7 @@ function ProductPage() {
             </div>
 
             {/* CTA */}
-            <div className="mt-10 flex items-stretch gap-3">
-              <div className="flex items-center border border-border">
-                <button
-                  onClick={() => setQty(Math.max(1, qty - 1))}
-                  className="h-12 w-12 grid place-items-center hover:bg-muted transition-colors"
-                  aria-label="Decrease"
-                >
-                  <Minus className="h-3 w-3" />
-                </button>
-                <span className="w-10 text-center text-sm">{qty}</span>
-                <button
-                  onClick={() => setQty(qty + 1)}
-                  className="h-12 w-12 grid place-items-center hover:bg-muted transition-colors"
-                  aria-label="Increase"
-                >
-                  <Plus className="h-3 w-3" />
-                </button>
-              </div>
-              <motion.button
-                whileHover={{ y: -2 }}
-                whileTap={{ scale: 0.98 }}
-                className="flex-1 bg-midnight text-frost text-[11px] tracking-luxury uppercase hover:bg-gold hover:text-midnight transition-colors duration-500"
-              >
-                Add to Bag
-              </motion.button>
-              <button
-                className="h-12 w-12 grid place-items-center border border-border hover:border-gold hover:text-gold transition-colors"
-                aria-label="Wishlist"
-              >
-                <Heart className="h-4 w-4" />
-              </button>
-            </div>
+            <ProductCTA product={product} size={size} color={color} qty={qty} setQty={setQty} />
 
             {/* Scarcity */}
             <div className="mt-6 flex items-center gap-2 text-[10px] tracking-luxury uppercase text-muted-foreground">
@@ -402,6 +373,60 @@ function colorName(hex: string) {
   };
   return map[hex] ?? "Signature";
 }
+
+function ProductCTA({
+  product,
+  size,
+  color,
+  qty,
+  setQty,
+}: {
+  product: NonNullable<ReturnType<typeof findProduct>>;
+  size: string | null;
+  color: string;
+  qty: number;
+  setQty: (n: number) => void;
+}) {
+  const { addToCart, toggleWishlist, inWishlist } = useShop();
+  const wished = inWishlist(product.id);
+  const handleAdd = () => {
+    if (!size) {
+      toast("Please select a size", { className: "luxury-toast" });
+      return;
+    }
+    addToCart({ id: product.id, qty, size, color }, product.name);
+  };
+  return (
+    <div className="mt-10 flex items-stretch gap-3">
+      <div className="flex items-center border border-border">
+        <button onClick={() => setQty(Math.max(1, qty - 1))} className="h-12 w-12 grid place-items-center hover:bg-muted transition-colors" aria-label="Decrease">
+          <Minus className="h-3 w-3" />
+        </button>
+        <span className="w-10 text-center text-sm">{qty}</span>
+        <button onClick={() => setQty(qty + 1)} className="h-12 w-12 grid place-items-center hover:bg-muted transition-colors" aria-label="Increase">
+          <Plus className="h-3 w-3" />
+        </button>
+      </div>
+      <motion.button
+        onClick={handleAdd}
+        whileHover={{ y: -2, boxShadow: "0 0 32px rgba(212,175,55,0.45)" }}
+        whileTap={{ scale: 0.97 }}
+        className="flex-1 bg-midnight text-frost text-[11px] tracking-luxury uppercase hover:bg-gold hover:text-midnight transition-colors duration-500"
+      >
+        Add to Bag
+      </motion.button>
+      <motion.button
+        whileTap={{ scale: 0.85 }}
+        onClick={() => toggleWishlist(product.id, product.name)}
+        className={`h-12 w-12 grid place-items-center border transition-colors ${wished ? "border-gold bg-gold text-midnight" : "border-border hover:border-gold hover:text-gold"}`}
+        aria-label="Wishlist"
+      >
+        <Heart className={`h-4 w-4 ${wished ? "fill-current" : ""}`} />
+      </motion.button>
+    </div>
+  );
+}
+
 
 function Detail({
   title,

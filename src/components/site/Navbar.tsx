@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Search, Heart, ShoppingBag, Menu } from "lucide-react";
 import { SearchOverlay } from "./SearchOverlay";
 import { MobileMenu } from "./MobileMenu";
+import { useShop } from "@/lib/store";
 
 const links = [
   { to: "/shop", label: "Collection" },
@@ -19,6 +20,7 @@ export function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isHome = pathname === "/";
+  const { cartCount, wishCount } = useShop();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 30);
@@ -95,12 +97,33 @@ export function Navbar() {
               <button onClick={() => setSearchOpen(true)} aria-label="Search" className="hover:text-gold transition-colors">
                 <Search className="h-[18px] w-[18px]" />
               </button>
-              <Link to="/wishlist" aria-label="Wishlist" className="hover:text-gold transition-colors">
+              <Link to="/wishlist" aria-label="Wishlist" className="relative hover:text-gold transition-colors">
                 <Heart className="h-[18px] w-[18px]" />
+                {wishCount > 0 && (
+                  <motion.span
+                    key={wishCount}
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 18 }}
+                    className="absolute -top-2 -right-2 h-4 w-4 rounded-full bg-gradient-gold text-[9px] font-semibold flex items-center justify-center text-midnight shadow-glow"
+                  >
+                    {wishCount}
+                  </motion.span>
+                )}
               </Link>
               <Link to="/cart" aria-label="Cart" className="relative hover:text-gold transition-colors">
                 <ShoppingBag className="h-[18px] w-[18px]" />
-                <span className="absolute -top-2 -right-2 h-4 w-4 rounded-full bg-gradient-gold text-[9px] font-semibold flex items-center justify-center text-midnight shadow-glow">2</span>
+                {cartCount > 0 && (
+                  <motion.span
+                    key={cartCount}
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 18 }}
+                    className="absolute -top-2 -right-2 h-4 w-4 rounded-full bg-gradient-gold text-[9px] font-semibold flex items-center justify-center text-midnight shadow-glow"
+                  >
+                    {cartCount}
+                  </motion.span>
+                )}
               </Link>
               <button
                 onClick={() => setMenuOpen(true)}

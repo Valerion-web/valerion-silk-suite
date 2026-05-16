@@ -83,7 +83,7 @@ function CategoryCard({
       transition={{ duration: 0.9, delay: index * 0.07, ease: [0.22, 1, 0.36, 1] }}
       className={`group relative overflow-hidden bg-midnight ${cat.span}`}
     >
-      <Link to="/shop" className="block h-full w-full">
+      <Link to="/category/$slug" params={{ slug: cat.id }} className="block h-full w-full">
         <div className="absolute inset-0 hover-zoom-parent">
           <img
             src={cat.image}

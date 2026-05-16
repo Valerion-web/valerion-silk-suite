@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { motion } from "framer-motion";
-import { SlidersHorizontal, X, Sparkles, Flame, Star } from "lucide-react";
-import { categories, products, sizes, productColors } from "@/lib/products";
+import { motion, AnimatePresence } from "framer-motion";
+import { ChevronDown, Sparkles, Flame, Star, X, Check } from "lucide-react";
+import { categories, products, productColors } from "@/lib/products";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
 
@@ -17,73 +17,225 @@ export const Route = createFileRoute("/shop")({
   component: ShopPage,
 });
 
-const FABRICS = ["Italian Wool", "Cashmere", "Egyptian Cotton", "Silk", "Cotton Velour"];
+const FABRICS = ["Italian Wool", "Egyptian Cotton", "Cashmere", "Silk", "Linen", "Cotton Velour", "Velvet", "Satin"];
 const FITS = ["Slim", "Tailored", "Regular", "Oversized"];
+const COLOR_OPTIONS = [
+  { name: "Navy", hex: "#0A1931" },
+  { name: "Black", hex: "#000000" },
+  { name: "White", hex: "#F8FAFC" },
+  { name: "Gold", hex: "#D4AF37" },
+  { name: "Beige", hex: "#C9B99A" },
+  { name: "Charcoal", hex: "#2D2D2D" },
+];
 const QUICK = [
   { id: "new", label: "New Arrivals", icon: Sparkles },
   { id: "best", label: "Best Sellers", icon: Flame },
   { id: "featured", label: "Featured", icon: Star },
+  { id: "limited", label: "Limited Edition", icon: Sparkles },
 ];
 
+type Filters = {
+  category: string;
+  size: string | null;
+  color: string | null;
+  maxPrice: number;
+  fabric: string | null;
+  fit: string | null;
+  inStock: boolean;
+  quick: string | null;
+  rating: number;
+};
+
+const DEFAULTS: Filters = {
+  category: "All",
+  size: null,
+  color: null,
+  maxPrice: 4000,
+  fabric: null,
+  fit: null,
+  inStock: false,
+  quick: null,
+  rating: 0,
+};
+
 function ShopPage() {
-  const [category, setCategory] = useState("All");
-  const [size, setSize] = useState<string | null>(null);
-  const [color, setColor] = useState<string | null>(null);
+  const [f, setF] = useState<Filters>(DEFAULTS);
   const [sort, setSort] = useState("Featured");
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [maxPrice, setMaxPrice] = useState(4000);
-  const [fabric, setFabric] = useState<string | null>(null);
-  const [fit, setFit] = useState<string | null>(null);
-  const [inStock, setInStock] = useState(false);
-  const [quick, setQuick] = useState<string | null>(null);
-  const [rating, setRating] = useState(0);
+  const [open, setOpen] = useState(false);
+
+  const set = <K extends keyof Filters>(k: K, v: Filters[K]) => setF((s) => ({ ...s, [k]: v }));
 
   const filtered = useMemo(() => {
     let list = products.slice();
-    if (category !== "All") list = list.filter((p) => p.category === category);
-    if (size) list = list.filter((p) => p.sizes.includes(size));
-    if (color) list = list.filter((p) => p.colors.some((c) => c.toLowerCase() === color.toLowerCase()));
-    list = list.filter((p) => p.price <= maxPrice);
-    if (fabric) list = list.filter((p) => p.fabric.toLowerCase().includes(fabric.toLowerCase()));
-    if (quick === "new") list = list.filter((p) => p.badge === "New");
-    if (quick === "best") list = list.filter((p) => p.badge === "Bestseller");
-    if (quick === "featured") list = list.filter((p) => p.badge === "Limited");
+    if (f.category !== "All") list = list.filter((p) => p.category === f.category);
+    if (f.size) list = list.filter((p) => p.sizes.includes(f.size!));
+    if (f.color) list = list.filter((p) => p.colors.some((c) => c.toLowerCase() === f.color!.toLowerCase()));
+    list = list.filter((p) => p.price <= f.maxPrice);
+    if (f.fabric) list = list.filter((p) => p.fabric.toLowerCase().includes(f.fabric!.toLowerCase()));
+    if (f.quick === "new") list = list.filter((p) => p.badge === "New");
+    if (f.quick === "best") list = list.filter((p) => p.badge === "Bestseller");
+    if (f.quick === "featured" || f.quick === "limited") list = list.filter((p) => p.badge === "Limited");
     if (sort === "Price: Low") list.sort((a, b) => a.price - b.price);
     if (sort === "Price: High") list.sort((a, b) => b.price - a.price);
     return list;
-  }, [category, size, color, sort, maxPrice, fabric, quick]);
+  }, [f, sort]);
 
-  const filterProps = { category, setCategory, size, setSize, color, setColor, maxPrice, setMaxPrice, fabric, setFabric, fit, setFit, inStock, setInStock, quick, setQuick, rating, setRating };
+  const activeCount =
+    (f.category !== "All" ? 1 : 0) +
+    (f.size ? 1 : 0) +
+    (f.color ? 1 : 0) +
+    (f.fabric ? 1 : 0) +
+    (f.fit ? 1 : 0) +
+    (f.rating ? 1 : 0) +
+    (f.inStock ? 1 : 0) +
+    (f.quick ? 1 : 0) +
+    (f.maxPrice < 4000 ? 1 : 0);
 
   return (
     <>
       <PageHeader eyebrow="The Edit" title="Shop the Collection" subtitle="Every piece, considered. Every fabric, exceptional." />
       <PageShell className="pt-0">
-        <div className="mx-auto max-w-[1500px] px-6 lg:px-12 mt-16">
-          {/* Quick filter chips */}
-          <div className="flex flex-wrap items-center gap-3 mb-10 pb-8 border-b border-border">
-            {QUICK.map((q) => {
-              const Icon = q.icon;
-              const active = quick === q.id;
-              return (
-                <button
-                  key={q.id}
-                  onClick={() => setQuick(active ? null : q.id)}
-                  className={`inline-flex items-center gap-2 px-4 py-2 text-[10px] tracking-luxury uppercase border transition-all ${
-                    active ? "bg-gold border-gold text-midnight shadow-glow" : "border-border hover:border-gold hover:text-gold"
-                  }`}
+        <div className="mx-auto max-w-[1500px] px-6 lg:px-12 mt-12">
+          {/* COLLECTIONS IN HOUSE — luxury dropdown */}
+          <div className="relative mb-10">
+            <button
+              onClick={() => setOpen((o) => !o)}
+              className={`w-full flex items-center justify-between gap-4 px-6 md:px-8 py-5 border transition-all duration-500 ${
+                open ? "border-gold shadow-[0_0_30px_rgba(212,175,55,0.25)]" : "border-gold/30 hover:border-gold/60"
+              } bg-midnight/5 backdrop-blur-md`}
+            >
+              <div className="flex items-center gap-4">
+                <span className="text-[10px] tracking-wider-luxury text-gold/80">⌖</span>
+                <div className="text-left">
+                  <p className="text-[10px] tracking-wider-luxury text-gold/80">— Refine —</p>
+                  <p className="font-display text-lg md:text-xl tracking-[0.18em]">COLLECTIONS IN HOUSE</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                {activeCount > 0 && (
+                  <span className="text-[10px] tracking-luxury uppercase text-gold">{activeCount} active</span>
+                )}
+                <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.4 }}>
+                  <ChevronDown className="h-5 w-5 text-gold" />
+                </motion.span>
+              </div>
+              <div className="pointer-events-none absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-gold/40 to-transparent" />
+            </button>
+
+            <AnimatePresence>
+              {open && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8, height: 0 }}
+                  animate={{ opacity: 1, y: 0, height: "auto" }}
+                  exit={{ opacity: 0, y: -8, height: 0 }}
+                  transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                  className="overflow-hidden"
                 >
-                  <Icon className="h-3.5 w-3.5" /> {q.label}
-                </button>
-              );
-            })}
+                  <div className="mt-3 border border-gold/30 bg-background/85 backdrop-blur-xl shadow-[0_30px_80px_-30px_rgba(212,175,55,0.25)]">
+                    <div className="grid lg:grid-cols-3 gap-x-12 gap-y-10 p-8 md:p-12">
+                      <Group title="Category">
+                        {categories.map((c) => (
+                          <SelectableRow key={c} active={f.category === c} onClick={() => set("category", c)}>{c}</SelectableRow>
+                        ))}
+                      </Group>
+
+                      <Group title={`Price · up to $${f.maxPrice.toLocaleString()}`}>
+                        <input
+                          type="range"
+                          min={300}
+                          max={4000}
+                          step={50}
+                          value={f.maxPrice}
+                          onChange={(e) => set("maxPrice", Number(e.target.value))}
+                          className="w-full accent-[var(--gold)]"
+                        />
+                        <div className="flex justify-between text-[10px] tracking-luxury uppercase text-muted-foreground mt-2">
+                          <span>$300</span><span>$4,000</span>
+                        </div>
+                      </Group>
+
+                      <Group title="Fabric">
+                        <div className="flex flex-wrap gap-2">
+                          {FABRICS.map((fb) => (
+                            <Chip key={fb} active={f.fabric === fb} onClick={() => set("fabric", f.fabric === fb ? null : fb)}>{fb}</Chip>
+                          ))}
+                        </div>
+                      </Group>
+
+                      <Group title="Fit">
+                        <div className="flex flex-wrap gap-2">
+                          {FITS.map((fit) => (
+                            <Chip key={fit} active={f.fit === fit} onClick={() => set("fit", f.fit === fit ? null : fit)}>{fit}</Chip>
+                          ))}
+                        </div>
+                      </Group>
+
+                      <Group title="Color">
+                        <div className="flex flex-wrap gap-3">
+                          {COLOR_OPTIONS.map((c) => (
+                            <button
+                              key={c.hex}
+                              onClick={() => set("color", f.color === c.hex ? null : c.hex)}
+                              className={`h-10 w-10 rounded-full border-2 transition-all ${f.color === c.hex ? "border-gold ring-2 ring-gold/30" : "border-border hover:border-foreground"}`}
+                              style={{ backgroundColor: c.hex }}
+                              aria-label={c.name}
+                            />
+                          ))}
+                        </div>
+                      </Group>
+
+                      <Group title="Rating">
+                        <div className="flex gap-1">
+                          {[1,2,3,4,5].map((n) => (
+                            <button key={n} onClick={() => set("rating", f.rating === n ? 0 : n)} aria-label={`${n} stars`}>
+                              <Star className={`h-5 w-5 ${n <= f.rating ? "fill-gold text-gold" : "text-muted-foreground"}`} />
+                            </button>
+                          ))}
+                        </div>
+                      </Group>
+
+                      <Group title="Availability">
+                        <div className="flex gap-2">
+                          <Chip active={f.inStock} onClick={() => set("inStock", !f.inStock)}>In Stock</Chip>
+                          <Chip active={false} onClick={() => {}}>Out of Stock</Chip>
+                        </div>
+                      </Group>
+
+                      <Group title="Featured">
+                        <div className="flex flex-wrap gap-2">
+                          {QUICK.map((q) => (
+                            <Chip key={q.id} active={f.quick === q.id} onClick={() => set("quick", f.quick === q.id ? null : q.id)}>{q.label}</Chip>
+                          ))}
+                        </div>
+                      </Group>
+
+                      <Group title="Actions">
+                        <div className="flex flex-col gap-3">
+                          <button
+                            onClick={() => setF(DEFAULTS)}
+                            className="inline-flex items-center justify-center gap-2 border border-border hover:border-gold hover:text-gold px-4 py-3 text-[10px] tracking-luxury uppercase transition-colors"
+                          >
+                            <X className="h-3 w-3" /> Reset All
+                          </button>
+                          <button
+                            onClick={() => setOpen(false)}
+                            className="inline-flex items-center justify-center gap-2 bg-gold text-midnight px-4 py-3 text-[10px] tracking-luxury uppercase hover:shadow-glow transition-all"
+                          >
+                            <Check className="h-3 w-3" /> View {filtered.length} Pieces
+                          </button>
+                        </div>
+                      </Group>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
-          <div className="flex items-center justify-between mb-10 gap-4">
-            <button onClick={() => setFiltersOpen(true)} className="lg:hidden inline-flex items-center gap-2 text-[11px] tracking-luxury uppercase border border-border px-4 py-2">
-              <SlidersHorizontal className="h-4 w-4" /> Filters
-            </button>
-            <p className="text-[11px] tracking-luxury uppercase text-muted-foreground hidden lg:block">{filtered.length} Pieces</p>
+          <div className="flex items-center justify-between mb-10 gap-4 pb-6 border-b border-border">
+            <p className="text-[11px] tracking-luxury uppercase text-muted-foreground">
+              <span className="text-foreground">{filtered.length}</span> pieces · New Arrivals
+            </p>
             <div className="flex items-center gap-3 ml-auto">
               <span className="text-[10px] tracking-luxury uppercase text-muted-foreground hidden md:inline">Sort</span>
               <select
@@ -98,158 +250,47 @@ function ShopPage() {
             </div>
           </div>
 
-          <div className="grid lg:grid-cols-[280px_1fr] gap-12">
-            <aside className="hidden lg:block">
-              <Filters {...filterProps} />
-            </aside>
-
-            <div>
-              {filtered.length === 0 ? (
-                <p className="font-serif italic text-muted-foreground text-center py-32">No pieces match these refinements.</p>
-              ) : (
-                <div className="grid gap-x-6 gap-y-12 sm:grid-cols-2 xl:grid-cols-3">
-                  {filtered.map((p, i) => <ProductCard key={p.id} product={p} index={i} />)}
-                </div>
-              )}
+          {filtered.length === 0 ? (
+            <p className="font-serif italic text-muted-foreground text-center py-32">No pieces match these refinements.</p>
+          ) : (
+            <div className="grid gap-x-6 gap-y-12 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {filtered.map((p, i) => <ProductCard key={p.id} product={p} index={i} />)}
             </div>
-          </div>
+          )}
         </div>
-
-        {filtersOpen && (
-          <motion.div initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }} className="fixed inset-0 z-50 bg-background p-8 overflow-y-auto lg:hidden">
-            <div className="flex justify-between items-center mb-8">
-              <span className="font-display text-2xl">Filters</span>
-              <button onClick={() => setFiltersOpen(false)}><X /></button>
-            </div>
-            <Filters {...filterProps} />
-          </motion.div>
-        )}
       </PageShell>
     </>
   );
 }
 
-type FProps = {
-  category: string; setCategory: (v: string) => void;
-  size: string | null; setSize: (v: string | null) => void;
-  color: string | null; setColor: (v: string | null) => void;
-  maxPrice: number; setMaxPrice: (v: number) => void;
-  fabric: string | null; setFabric: (v: string | null) => void;
-  fit: string | null; setFit: (v: string | null) => void;
-  inStock: boolean; setInStock: (v: boolean) => void;
-  quick: string | null; setQuick: (v: string | null) => void;
-  rating: number; setRating: (v: number) => void;
-};
-
-function Filters(p: FProps) {
+function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="space-y-10">
-      <FilterGroup title="Category">
-        {categories.map((c) => (
-          <button
-            key={c}
-            onClick={() => p.setCategory(c)}
-            className={`block text-left text-sm py-1 link-underline ${p.category === c ? "text-gold" : "text-foreground"}`}
-          >
-            {c}
-          </button>
-        ))}
-      </FilterGroup>
-
-      <FilterGroup title={`Price · up to $${p.maxPrice.toLocaleString()}`}>
-        <input
-          type="range"
-          min={300}
-          max={4000}
-          step={50}
-          value={p.maxPrice}
-          onChange={(e) => p.setMaxPrice(Number(e.target.value))}
-          className="w-full accent-[var(--gold)]"
-        />
-        <div className="flex justify-between text-[10px] tracking-luxury uppercase text-muted-foreground mt-2">
-          <span>$300</span><span>$4,000</span>
-        </div>
-      </FilterGroup>
-
-      <FilterGroup title="Size">
-        <div className="flex flex-wrap gap-2">
-          {sizes.map((s) => (
-            <button
-              key={s}
-              onClick={() => p.setSize(p.size === s ? null : s)}
-              className={`min-w-10 h-10 px-3 border text-xs tracking-luxury ${p.size === s ? "border-gold bg-gold text-midnight" : "border-border hover:border-foreground"}`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      </FilterGroup>
-
-      <FilterGroup title="Color">
-        <div className="flex flex-wrap gap-3">
-          {productColors.map((c) => (
-            <button
-              key={c.hex}
-              onClick={() => p.setColor(p.color === c.hex ? null : c.hex)}
-              className={`h-9 w-9 rounded-full border-2 ${p.color === c.hex ? "border-gold ring-2 ring-gold/30" : "border-border"}`}
-              style={{ backgroundColor: c.hex }}
-              aria-label={c.name}
-            />
-          ))}
-        </div>
-      </FilterGroup>
-
-      <FilterGroup title="Fabric">
-        {FABRICS.map((f) => (
-          <button
-            key={f}
-            onClick={() => p.setFabric(p.fabric === f ? null : f)}
-            className={`block text-left text-sm py-1 link-underline ${p.fabric === f ? "text-gold" : "text-foreground"}`}
-          >
-            {f}
-          </button>
-        ))}
-      </FilterGroup>
-
-      <FilterGroup title="Fit">
-        <div className="flex flex-wrap gap-2">
-          {FITS.map((f) => (
-            <button
-              key={f}
-              onClick={() => p.setFit(p.fit === f ? null : f)}
-              className={`px-3 h-9 border text-[10px] tracking-luxury uppercase ${p.fit === f ? "border-gold bg-gold text-midnight" : "border-border hover:border-foreground"}`}
-            >
-              {f}
-            </button>
-          ))}
-        </div>
-      </FilterGroup>
-
-      <FilterGroup title="Rating">
-        <div className="flex gap-1">
-          {[1,2,3,4,5].map((n) => (
-            <button key={n} onClick={() => p.setRating(p.rating === n ? 0 : n)} aria-label={`${n} stars`}>
-              <Star className={`h-5 w-5 ${n <= p.rating ? "fill-gold text-gold" : "text-muted-foreground"}`} />
-            </button>
-          ))}
-        </div>
-      </FilterGroup>
-
-      <FilterGroup title="Availability">
-        <label className="flex items-center gap-3 text-sm cursor-pointer">
-          <input type="checkbox" checked={p.inStock} onChange={(e) => p.setInStock(e.target.checked)} className="accent-[var(--gold)]" />
-          In stock only
-        </label>
-      </FilterGroup>
+    <div>
+      <h4 className="text-[11px] tracking-luxury uppercase text-gold mb-4 pb-3 border-b border-gold/15">{title}</h4>
+      <div className="space-y-2">{children}</div>
     </div>
   );
 }
 
-function FilterGroup({ title, children }: { title: string; children: React.ReactNode }) {
+function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <div>
-      <h4 className="text-[11px] tracking-luxury uppercase text-gold mb-4 pb-3 border-b border-border">{title}</h4>
-      <div className="space-y-2">{children}</div>
-    </div>
+    <button
+      onClick={onClick}
+      className={`px-3 h-9 border text-[10px] tracking-luxury uppercase transition-all ${active ? "border-gold bg-gold text-midnight" : "border-border hover:border-gold hover:text-gold"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SelectableRow({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center justify-between w-full text-left text-sm py-1.5 link-underline ${active ? "text-gold" : "text-foreground"}`}
+    >
+      <span>{children}</span>
+      {active && <Check className="h-3 w-3 text-gold" />}
+    </button>
   );
 }
