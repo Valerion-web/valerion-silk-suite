@@ -381,7 +381,7 @@ function ProductCTA({
   qty,
   setQty,
 }: {
-  product: ReturnType<typeof findProduct> & {};
+  product: NonNullable<ReturnType<typeof findProduct>>;
   size: string | null;
   color: string;
   qty: number;
