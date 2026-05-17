@@ -96,66 +96,41 @@ function ShopPage() {
       <PageHeader eyebrow="The Edit" title="Shop the Collection" subtitle="Every piece, considered. Every fabric, exceptional." />
       <PageShell className="pt-0">
         <div className="mx-auto max-w-[1500px] px-6 lg:px-12 mt-12">
-          {/* COLLECTIONS IN HOUSE — luxury dropdown */}
-          <div className="relative mb-10">
+          {/* COLLECTIONS IN HOUSE — compact luxury dropdown */}
+          <div className="relative mb-10 max-w-xl">
             <button
               onClick={() => setOpen((o) => !o)}
-              className={`w-full flex items-center justify-between gap-4 px-6 md:px-8 py-5 border transition-all duration-500 ${
-                open ? "border-gold shadow-[0_0_30px_rgba(212,175,55,0.25)]" : "border-gold/30 hover:border-gold/60"
+              className={`w-full flex items-center justify-between gap-4 px-5 py-3.5 border transition-all duration-500 ${
+                open ? "border-gold shadow-[0_0_24px_rgba(212,175,55,0.2)]" : "border-gold/30 hover:border-gold/60"
               } bg-midnight/5 backdrop-blur-md`}
             >
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
                 <span className="text-[10px] tracking-wider-luxury text-gold/80">⌖</span>
-                <div className="text-left">
-                  <p className="text-[10px] tracking-wider-luxury text-gold/80">— Refine —</p>
-                  <p className="font-display text-lg md:text-xl tracking-[0.18em]">COLLECTIONS IN HOUSE</p>
-                </div>
+                <p className="font-display text-sm md:text-base tracking-[0.18em]">COLLECTIONS IN HOUSE</p>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
                 {activeCount > 0 && (
-                  <span className="text-[10px] tracking-luxury uppercase text-gold">{activeCount} active</span>
+                  <span className="text-[9px] tracking-luxury uppercase text-gold">{activeCount}</span>
                 )}
                 <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.4 }}>
-                  <ChevronDown className="h-5 w-5 text-gold" />
+                  <ChevronDown className="h-4 w-4 text-gold" />
                 </motion.span>
               </div>
-              <div className="pointer-events-none absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-gold/40 to-transparent" />
             </button>
 
             <AnimatePresence>
               {open && (
                 <motion.div
-                  initial={{ opacity: 0, y: -8, height: 0 }}
-                  animate={{ opacity: 1, y: 0, height: "auto" }}
-                  exit={{ opacity: 0, y: -8, height: 0 }}
-                  transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-                  className="overflow-hidden"
+                  initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                  transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                  className="absolute z-30 left-0 right-0 mt-2 origin-top"
                 >
-                  <div className="mt-3 border border-gold/30 bg-background/85 backdrop-blur-xl shadow-[0_30px_80px_-30px_rgba(212,175,55,0.25)]">
-                    <div className="grid lg:grid-cols-3 gap-x-12 gap-y-10 p-8 md:p-12">
-                      <Group title="Category">
-                        {categories.map((c) => (
-                          <SelectableRow key={c} active={f.category === c} onClick={() => set("category", c)}>{c}</SelectableRow>
-                        ))}
-                      </Group>
-
-                      <Group title={`Price · up to $${f.maxPrice.toLocaleString()}`}>
-                        <input
-                          type="range"
-                          min={300}
-                          max={4000}
-                          step={50}
-                          value={f.maxPrice}
-                          onChange={(e) => set("maxPrice", Number(e.target.value))}
-                          className="w-full accent-[var(--gold)]"
-                        />
-                        <div className="flex justify-between text-[10px] tracking-luxury uppercase text-muted-foreground mt-2">
-                          <span>$300</span><span>$4,000</span>
-                        </div>
-                      </Group>
-
+                  <div className="border border-gold/40 bg-background/90 backdrop-blur-2xl shadow-[0_24px_60px_-20px_rgba(212,175,55,0.25)]">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5 p-5 md:p-6">
                       <Group title="Fabric">
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-1.5">
                           {FABRICS.map((fb) => (
                             <Chip key={fb} active={f.fabric === fb} onClick={() => set("fabric", f.fabric === fb ? null : fb)}>{fb}</Chip>
                           ))}
@@ -163,7 +138,7 @@ function ShopPage() {
                       </Group>
 
                       <Group title="Fit">
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-1.5">
                           {FITS.map((fit) => (
                             <Chip key={fit} active={f.fit === fit} onClick={() => set("fit", f.fit === fit ? null : fit)}>{fit}</Chip>
                           ))}
@@ -171,12 +146,12 @@ function ShopPage() {
                       </Group>
 
                       <Group title="Color">
-                        <div className="flex flex-wrap gap-3">
+                        <div className="flex flex-wrap gap-2">
                           {COLOR_OPTIONS.map((c) => (
                             <button
                               key={c.hex}
                               onClick={() => set("color", f.color === c.hex ? null : c.hex)}
-                              className={`h-10 w-10 rounded-full border-2 transition-all ${f.color === c.hex ? "border-gold ring-2 ring-gold/30" : "border-border hover:border-foreground"}`}
+                              className={`h-7 w-7 rounded-full border transition-all ${f.color === c.hex ? "border-gold ring-2 ring-gold/30" : "border-border hover:border-foreground"}`}
                               style={{ backgroundColor: c.hex }}
                               aria-label={c.name}
                             />
@@ -188,43 +163,40 @@ function ShopPage() {
                         <div className="flex gap-1">
                           {[1,2,3,4,5].map((n) => (
                             <button key={n} onClick={() => set("rating", f.rating === n ? 0 : n)} aria-label={`${n} stars`}>
-                              <Star className={`h-5 w-5 ${n <= f.rating ? "fill-gold text-gold" : "text-muted-foreground"}`} />
+                              <Star className={`h-4 w-4 ${n <= f.rating ? "fill-gold text-gold" : "text-muted-foreground"}`} />
                             </button>
                           ))}
                         </div>
                       </Group>
 
                       <Group title="Availability">
-                        <div className="flex gap-2">
+                        <div className="flex gap-1.5">
                           <Chip active={f.inStock} onClick={() => set("inStock", !f.inStock)}>In Stock</Chip>
-                          <Chip active={false} onClick={() => {}}>Out of Stock</Chip>
                         </div>
                       </Group>
 
                       <Group title="Featured">
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-1.5">
                           {QUICK.map((q) => (
                             <Chip key={q.id} active={f.quick === q.id} onClick={() => set("quick", f.quick === q.id ? null : q.id)}>{q.label}</Chip>
                           ))}
                         </div>
                       </Group>
+                    </div>
 
-                      <Group title="Actions">
-                        <div className="flex flex-col gap-3">
-                          <button
-                            onClick={() => setF(DEFAULTS)}
-                            className="inline-flex items-center justify-center gap-2 border border-border hover:border-gold hover:text-gold px-4 py-3 text-[10px] tracking-luxury uppercase transition-colors"
-                          >
-                            <X className="h-3 w-3" /> Reset All
-                          </button>
-                          <button
-                            onClick={() => setOpen(false)}
-                            className="inline-flex items-center justify-center gap-2 bg-gold text-midnight px-4 py-3 text-[10px] tracking-luxury uppercase hover:shadow-glow transition-all"
-                          >
-                            <Check className="h-3 w-3" /> View {filtered.length} Pieces
-                          </button>
-                        </div>
-                      </Group>
+                    <div className="flex items-center justify-between gap-3 px-5 md:px-6 py-3 border-t border-gold/15 bg-midnight/[0.03]">
+                      <button
+                        onClick={() => setF(DEFAULTS)}
+                        className="inline-flex items-center gap-1.5 text-[10px] tracking-luxury uppercase text-muted-foreground hover:text-gold transition-colors"
+                      >
+                        <X className="h-3 w-3" /> Reset
+                      </button>
+                      <button
+                        onClick={() => setOpen(false)}
+                        className="inline-flex items-center gap-1.5 bg-gold text-midnight px-4 py-2 text-[10px] tracking-luxury uppercase hover:shadow-glow transition-all"
+                      >
+                        <Check className="h-3 w-3" /> View {filtered.length}
+                      </button>
                     </div>
                   </div>
                 </motion.div>
