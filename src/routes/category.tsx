@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { ArrowUpRight } from "lucide-react";
 import { PageHeader, PageShell } from "@/components/site/PageShell";
@@ -45,6 +45,10 @@ const CATEGORIES = categories
   });
 
 function CategoryPage() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+
+  if (pathname !== "/category") return <Outlet />;
+
   return (
     <>
       <PageHeader
