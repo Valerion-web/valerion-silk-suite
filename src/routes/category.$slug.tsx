@@ -15,10 +15,10 @@ const CATEGORY_MAP: Record<string, { title: string; matches: string[]; descripti
   "knitwear": { title: "Knitwear Essentials", matches: ["Knitwear Essentials"], description: "Mongolian cashmere and silk-cashmere blends, knit to last lifetimes." },
   "street-luxury": { title: "Street Luxury", matches: ["Street Luxury"], description: "Hooded overcoats, velour and elevated daywear for the modern city dweller." },
   "streetwear-elite": { title: "Street Luxury", matches: ["Street Luxury"], description: "Hooded overcoats, velour and elevated daywear for the modern city dweller." },
-  "ethnic-wear": { title: "Ethnic Wear", matches: ["Tailored Suits"], description: "Heritage silhouettes reimagined for the contemporary gentleman." },
+  "ethnic-wear": { title: "Ethnic Wear", matches: ["Ethnic Wear"], description: "Heritage silhouettes reimagined for the contemporary gentleman." },
   "blazers": { title: "Blazers", matches: ["Oversized Luxury", "Tailored Suits"], description: "Statement blazers cut for boardrooms and ballrooms alike." },
   "casual-essentials": { title: "Casual Essentials", matches: ["Knitwear Essentials", "Premium Shirts"], description: "Refined weekend pieces — effortless, never careless." },
-  "accessories": { title: "Accessories", matches: [], description: "The final note: silk ties, leather goods, and bespoke pocket squares." },
+  "accessories": { title: "Accessories", matches: ["Accessories"], description: "The final note: silk ties, leather goods, and bespoke pocket squares." },
 };
 
 export const Route = createFileRoute("/category/$slug")({
