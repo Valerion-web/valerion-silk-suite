@@ -1,7 +1,7 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { ChevronRight, Sparkles } from "lucide-react";
-import { categories, getCategoryBySlug, getProductsByCategorySlug, products, slugifyCategory } from "@/lib/products";
+import { categories, getCategoryBySlug, getProductsByCategorySlug, slugifyCategory } from "@/lib/products";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
 import suits from "@/assets/collection-suits.jpg";
@@ -104,6 +104,20 @@ function CategorySlugPage() {
             <span className="text-foreground">{category}</span>
           </nav>
 
+          <motion.div
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
+            className="mb-12 border-y border-gold/20 py-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
+          >
+            <div className="flex items-center gap-3 text-[10px] tracking-luxury uppercase text-gold">
+              <Sparkles className="h-3.5 w-3.5" /> Dynamic Atelier Edit
+            </div>
+            <p className="text-[11px] tracking-luxury uppercase text-muted-foreground">
+              <span className="text-foreground">{items.length}</span> {items.length === 1 ? "piece" : "pieces"} loaded for {category}
+            </p>
+          </motion.div>
+
           {items.length === 0 ? (
             <p className="text-center py-32 font-serif italic text-muted-foreground">
               This atelier is in preparation. Please visit again soon.
@@ -113,7 +127,7 @@ function CategorySlugPage() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.7 }}
-              className="grid gap-x-6 gap-y-12 sm:grid-cols-2 lg:grid-cols-3"
+              className="grid gap-x-6 gap-y-14 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
             >
               {items.map((p, i) => (
                 <ProductCard key={p.id} product={p} index={i} />
