@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Sparkles, Flame, Star, X, Check } from "lucide-react";
-import { categories, products, productColors } from "@/lib/products";
+import { products } from "@/lib/products";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
 
