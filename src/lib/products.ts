@@ -60,6 +60,8 @@ export const categories = [
   "Modern Formalwear",
   "Knitwear Essentials",
   "Street Luxury",
+  "Ethnic Wear",
+  "Accessories",
 ];
 
 export const sizes = ["S", "M", "L", "XL", "46", "48", "50", "52", "54"];
