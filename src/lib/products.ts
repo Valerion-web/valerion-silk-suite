@@ -10,6 +10,8 @@ export type Product = {
   name: string;
   category: string;
   price: number;
+  rating?: number;
+  reviews?: number;
   image: string;
   altImage?: string;
   badge?: "New" | "Bestseller" | "Limited";
@@ -72,5 +74,20 @@ export const productColors = [
   { name: "Frost", hex: "#F8FAFC" },
   { name: "Gold", hex: "#D4AF37" },
 ];
+
+export const slugifyCategory = (category: string) =>
+  category
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+export const getCategoryBySlug = (slug: string) =>
+  categories.filter((category) => category !== "All").find((category) => slugifyCategory(category) === slug) ?? null;
+
+export const getProductsByCategorySlug = (slug: string) => {
+  const category = getCategoryBySlug(slug);
+  return category ? products.filter((product) => product.category === category) : [];
+};
 
 export const findProduct = (id: string) => products.find((p) => p.id === id);

@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { ArrowUpRight } from "lucide-react";
 import { PageHeader, PageShell } from "@/components/site/PageShell";
@@ -11,6 +11,7 @@ import blazers from "@/assets/cat-blazers.jpg";
 import ethnic from "@/assets/cat-ethnic.jpg";
 import casual from "@/assets/cat-casual.jpg";
 import accessories from "@/assets/cat-accessories.jpg";
+import { categories, getProductsByCategorySlug, slugifyCategory } from "@/lib/products";
 
 export const Route = createFileRoute("/category")({
   head: () => ({
@@ -24,19 +25,30 @@ export const Route = createFileRoute("/category")({
   component: CategoryPage,
 });
 
-const CATEGORIES = [
-  { id: "tailored-suits", title: "Tailored Suits", count: 24, image: suits, span: "lg:row-span-2" },
-  { id: "premium-shirts", title: "Premium Shirts", count: 38, image: shirts, span: "" },
-  { id: "oversized-luxury", title: "Oversized Luxury", count: 17, image: oversized, span: "" },
-  { id: "blazers", title: "Blazers", count: 19, image: blazers, span: "lg:row-span-2" },
-  { id: "ethnic-wear", title: "Ethnic Wear", count: 12, image: ethnic, span: "" },
-  { id: "casual-essentials", title: "Casual Essentials", count: 28, image: casual, span: "" },
-  { id: "streetwear-elite", title: "Streetwear Elite", count: 22, image: street, span: "" },
-  { id: "knitwear", title: "Knitwear", count: 19, image: knitwear, span: "" },
-  { id: "accessories", title: "Accessories", count: 34, image: accessories, span: "lg:col-span-2" },
-];
+const CATEGORY_VISUALS: Record<string, { image: string; span: string }> = {
+  "Tailored Suits": { image: suits, span: "lg:row-span-2" },
+  "Premium Shirts": { image: shirts, span: "" },
+  "Oversized Luxury": { image: oversized, span: "" },
+  "Modern Formalwear": { image: blazers, span: "lg:row-span-2" },
+  "Knitwear Essentials": { image: knitwear, span: "" },
+  "Street Luxury": { image: street, span: "" },
+  "Ethnic Wear": { image: ethnic, span: "" },
+  Accessories: { image: accessories, span: "lg:col-span-2" },
+};
+
+const CATEGORIES = categories
+  .filter((title) => title !== "All")
+  .map((title) => {
+    const id = slugifyCategory(title);
+    const visual = CATEGORY_VISUALS[title] ?? { image: casual, span: "" };
+    return { id, title, count: getProductsByCategorySlug(id).length, ...visual };
+  });
 
 function CategoryPage() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+
+  if (pathname !== "/category") return <Outlet />;
+
   return (
     <>
       <PageHeader
@@ -112,7 +124,7 @@ function CategoryCard({
         {/* Bottom content */}
         <div className="absolute bottom-0 inset-x-0 p-7 md:p-9 text-frost">
           <p className="text-[10px] tracking-wider-luxury uppercase text-gold/90 mb-3">
-            {cat.count} pieces
+            {cat.count} {cat.count === 1 ? "piece" : "pieces"}
           </p>
           <h3 className="font-display text-2xl md:text-3xl leading-tight transition-transform duration-700 group-hover:translate-x-1">
             {cat.title}

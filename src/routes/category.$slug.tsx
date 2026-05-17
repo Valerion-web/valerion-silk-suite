@@ -1,34 +1,57 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { motion } from "framer-motion";
-import { ChevronRight } from "lucide-react";
-import { products, collections } from "@/lib/products";
+import { ChevronRight, Sparkles } from "lucide-react";
+import { categories, getCategoryBySlug, getProductsByCategorySlug, slugifyCategory } from "@/lib/products";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
+import suits from "@/assets/collection-suits.jpg";
+import shirts from "@/assets/collection-shirts.jpg";
+import oversized from "@/assets/collection-oversized.jpg";
+import formal from "@/assets/collection-formal.jpg";
+import knitwear from "@/assets/collection-knitwear.jpg";
+import street from "@/assets/collection-street.jpg";
+import ethnic from "@/assets/cat-ethnic.jpg";
+import accessories from "@/assets/cat-accessories.jpg";
 
-// Mapping from category slugs (used in URLs) to product.category labels
-const CATEGORY_MAP: Record<string, { title: string; matches: string[]; description: string }> = {
-  "tailored-suits": { title: "Tailored Suits", matches: ["Tailored Suits", "Modern Formalwear"], description: "Sculpted silhouettes engineered for the gentleman who measures success in millimetres." },
-  "premium-shirts": { title: "Premium Shirts", matches: ["Premium Shirts"], description: "Sea Island and Egyptian cotton, hand-finished placards, mother-of-pearl buttons." },
-  "oversized-luxury": { title: "Oversized Luxury", matches: ["Oversized Luxury"], description: "Relaxed proportions in noble fabrics — quiet luxury redefined." },
-  "modern-formalwear": { title: "Modern Formalwear", matches: ["Modern Formalwear", "Tailored Suits"], description: "Tuxedos and three-piece compositions for the most discerning evenings." },
-  "knitwear-essentials": { title: "Knitwear Essentials", matches: ["Knitwear Essentials"], description: "Mongolian cashmere and silk-cashmere blends, knit to last lifetimes." },
-  "knitwear": { title: "Knitwear Essentials", matches: ["Knitwear Essentials"], description: "Mongolian cashmere and silk-cashmere blends, knit to last lifetimes." },
-  "street-luxury": { title: "Street Luxury", matches: ["Street Luxury"], description: "Hooded overcoats, velour and elevated daywear for the modern city dweller." },
-  "streetwear-elite": { title: "Street Luxury", matches: ["Street Luxury"], description: "Hooded overcoats, velour and elevated daywear for the modern city dweller." },
-  "ethnic-wear": { title: "Ethnic Wear", matches: ["Ethnic Wear"], description: "Heritage silhouettes reimagined for the contemporary gentleman." },
-  "blazers": { title: "Blazers", matches: ["Oversized Luxury", "Tailored Suits"], description: "Statement blazers cut for boardrooms and ballrooms alike." },
-  "casual-essentials": { title: "Casual Essentials", matches: ["Knitwear Essentials", "Premium Shirts"], description: "Refined weekend pieces — effortless, never careless." },
-  "accessories": { title: "Accessories", matches: ["Accessories"], description: "The final note: silk ties, leather goods, and bespoke pocket squares." },
+const CATEGORY_COPY: Record<string, string> = {
+  "Tailored Suits": "Sculpted silhouettes engineered for the gentleman who measures success in millimetres.",
+  "Premium Shirts": "Sea Island and Egyptian cotton, hand-finished placards, mother-of-pearl buttons.",
+  "Oversized Luxury": "Relaxed proportions in noble fabrics — quiet luxury redefined.",
+  "Modern Formalwear": "Tuxedos and three-piece compositions for the most discerning evenings.",
+  "Knitwear Essentials": "Mongolian cashmere and silk-cashmere blends, knit to last lifetimes.",
+  "Street Luxury": "Hooded overcoats, velour and elevated daywear for the modern city dweller.",
+  "Ethnic Wear": "Heritage silhouettes reimagined for the contemporary gentleman.",
+  Accessories: "The final note: silk pocket squares, leather goods, and decisive finishing touches.",
 };
+
+const CATEGORY_IMAGES: Record<string, string> = {
+  "Tailored Suits": suits,
+  "Premium Shirts": shirts,
+  "Oversized Luxury": oversized,
+  "Modern Formalwear": formal,
+  "Knitwear Essentials": knitwear,
+  "Street Luxury": street,
+  "Ethnic Wear": ethnic,
+  Accessories: accessories,
+};
+
+const LEGACY_SLUGS: Record<string, string> = {
+  knitwear: "knitwear-essentials",
+  "streetwear-elite": "street-luxury",
+  blazers: "modern-formalwear",
+  "casual-essentials": "knitwear-essentials",
+};
+
+const resolveCategory = (slug: string) => getCategoryBySlug(LEGACY_SLUGS[slug] ?? slug);
 
 export const Route = createFileRoute("/category/$slug")({
   head: ({ params }) => {
-    const cat = CATEGORY_MAP[params.slug];
-    const title = cat ? `${cat.title} — House of Valerion` : "Category — House of Valerion";
+    const category = resolveCategory(params.slug);
+    const title = category ? `${category} — House of Valerion` : "Category — House of Valerion";
     return {
       meta: [
         { title },
-        { name: "description", content: cat?.description ?? "Discover the House of Valerion collection." },
+        { name: "description", content: category ? CATEGORY_COPY[category] : "Discover the House of Valerion collection." },
         { property: "og:title", content: title },
       ],
     };
@@ -48,19 +71,28 @@ export const Route = createFileRoute("/category/$slug")({
 
 function CategorySlugPage() {
   const { slug } = Route.useParams();
-  const cat = CATEGORY_MAP[slug];
-  if (!cat) throw notFound();
+  const category = resolveCategory(slug);
+  if (!category) throw notFound();
 
-  const items = cat.matches.length
-    ? products.filter((p) => cat.matches.includes(p.category))
-    : products.slice(0, 6);
+  const resolvedSlug = slugifyCategory(category);
+  const items = getProductsByCategorySlug(resolvedSlug);
 
-  // Related: other categories
-  const others = collections.filter((c) => c.id !== slug).slice(0, 4);
+  const others = categories
+    .filter((title) => title !== "All" && title !== category)
+    .map((title) => {
+      const id = slugifyCategory(title);
+      return {
+        id,
+        title,
+        image: CATEGORY_IMAGES[title],
+        count: getProductsByCategorySlug(id).length,
+      };
+    })
+    .slice(0, 4);
 
   return (
     <>
-      <PageHeader eyebrow="Collection" title={cat.title} subtitle={cat.description} />
+      <PageHeader eyebrow="Collection" title={category} subtitle={CATEGORY_COPY[category]} />
       <PageShell className="pt-0">
         <div className="mx-auto max-w-[1500px] px-6 lg:px-12 mt-10">
           {/* breadcrumb */}
@@ -69,8 +101,22 @@ function CategorySlugPage() {
             <ChevronRight className="h-3 w-3" />
             <Link to="/category" className="hover:text-gold">Categories</Link>
             <ChevronRight className="h-3 w-3" />
-            <span className="text-foreground">{cat.title}</span>
+            <span className="text-foreground">{category}</span>
           </nav>
+
+          <motion.div
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
+            className="mb-12 border-y border-gold/20 py-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
+          >
+            <div className="flex items-center gap-3 text-[10px] tracking-luxury uppercase text-gold">
+              <Sparkles className="h-3.5 w-3.5" /> Dynamic Atelier Edit
+            </div>
+            <p className="text-[11px] tracking-luxury uppercase text-muted-foreground">
+              <span className="text-foreground">{items.length}</span> {items.length === 1 ? "piece" : "pieces"} loaded for {category}
+            </p>
+          </motion.div>
 
           {items.length === 0 ? (
             <p className="text-center py-32 font-serif italic text-muted-foreground">
@@ -81,7 +127,7 @@ function CategorySlugPage() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.7 }}
-              className="grid gap-x-6 gap-y-12 sm:grid-cols-2 lg:grid-cols-3"
+              className="grid gap-x-6 gap-y-14 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
             >
               {items.map((p, i) => (
                 <ProductCard key={p.id} product={p} index={i} />
