@@ -46,12 +46,12 @@ const resolveCategory = (slug: string) => getCategoryBySlug(LEGACY_SLUGS[slug] ?
 
 export const Route = createFileRoute("/category/$slug")({
   head: ({ params }) => {
-    const cat = CATEGORY_MAP[params.slug];
-    const title = cat ? `${cat.title} — House of Valerion` : "Category — House of Valerion";
+    const category = resolveCategory(params.slug);
+    const title = category ? `${category} — House of Valerion` : "Category — House of Valerion";
     return {
       meta: [
         { title },
-        { name: "description", content: cat?.description ?? "Discover the House of Valerion collection." },
+        { name: "description", content: category ? CATEGORY_COPY[category] : "Discover the House of Valerion collection." },
         { property: "og:title", content: title },
       ],
     };
@@ -71,19 +71,28 @@ export const Route = createFileRoute("/category/$slug")({
 
 function CategorySlugPage() {
   const { slug } = Route.useParams();
-  const cat = CATEGORY_MAP[slug];
-  if (!cat) throw notFound();
+  const category = resolveCategory(slug);
+  if (!category) throw notFound();
 
-  const items = cat.matches.length
-    ? products.filter((p) => cat.matches.includes(p.category))
-    : products.slice(0, 6);
+  const resolvedSlug = slugifyCategory(category);
+  const items = getProductsByCategorySlug(resolvedSlug);
 
-  // Related: other categories
-  const others = collections.filter((c) => c.id !== slug).slice(0, 4);
+  const others = categories
+    .filter((title) => title !== "All" && title !== category)
+    .map((title) => {
+      const id = slugifyCategory(title);
+      return {
+        id,
+        title,
+        image: CATEGORY_IMAGES[title],
+        count: getProductsByCategorySlug(id).length,
+      };
+    })
+    .slice(0, 4);
 
   return (
     <>
-      <PageHeader eyebrow="Collection" title={cat.title} subtitle={cat.description} />
+      <PageHeader eyebrow="Collection" title={category} subtitle={CATEGORY_COPY[category]} />
       <PageShell className="pt-0">
         <div className="mx-auto max-w-[1500px] px-6 lg:px-12 mt-10">
           {/* breadcrumb */}
@@ -92,7 +101,7 @@ function CategorySlugPage() {
             <ChevronRight className="h-3 w-3" />
             <Link to="/category" className="hover:text-gold">Categories</Link>
             <ChevronRight className="h-3 w-3" />
-            <span className="text-foreground">{cat.title}</span>
+            <span className="text-foreground">{category}</span>
           </nav>
 
           {items.length === 0 ? (
