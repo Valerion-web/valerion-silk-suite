@@ -1,25 +1,48 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { motion } from "framer-motion";
-import { ChevronRight } from "lucide-react";
-import { products, collections } from "@/lib/products";
+import { ChevronRight, Sparkles } from "lucide-react";
+import { categories, getCategoryBySlug, getProductsByCategorySlug, products, slugifyCategory } from "@/lib/products";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
+import suits from "@/assets/collection-suits.jpg";
+import shirts from "@/assets/collection-shirts.jpg";
+import oversized from "@/assets/collection-oversized.jpg";
+import formal from "@/assets/collection-formal.jpg";
+import knitwear from "@/assets/collection-knitwear.jpg";
+import street from "@/assets/collection-street.jpg";
+import ethnic from "@/assets/cat-ethnic.jpg";
+import accessories from "@/assets/cat-accessories.jpg";
 
-// Mapping from category slugs (used in URLs) to product.category labels
-const CATEGORY_MAP: Record<string, { title: string; matches: string[]; description: string }> = {
-  "tailored-suits": { title: "Tailored Suits", matches: ["Tailored Suits", "Modern Formalwear"], description: "Sculpted silhouettes engineered for the gentleman who measures success in millimetres." },
-  "premium-shirts": { title: "Premium Shirts", matches: ["Premium Shirts"], description: "Sea Island and Egyptian cotton, hand-finished placards, mother-of-pearl buttons." },
-  "oversized-luxury": { title: "Oversized Luxury", matches: ["Oversized Luxury"], description: "Relaxed proportions in noble fabrics — quiet luxury redefined." },
-  "modern-formalwear": { title: "Modern Formalwear", matches: ["Modern Formalwear", "Tailored Suits"], description: "Tuxedos and three-piece compositions for the most discerning evenings." },
-  "knitwear-essentials": { title: "Knitwear Essentials", matches: ["Knitwear Essentials"], description: "Mongolian cashmere and silk-cashmere blends, knit to last lifetimes." },
-  "knitwear": { title: "Knitwear Essentials", matches: ["Knitwear Essentials"], description: "Mongolian cashmere and silk-cashmere blends, knit to last lifetimes." },
-  "street-luxury": { title: "Street Luxury", matches: ["Street Luxury"], description: "Hooded overcoats, velour and elevated daywear for the modern city dweller." },
-  "streetwear-elite": { title: "Street Luxury", matches: ["Street Luxury"], description: "Hooded overcoats, velour and elevated daywear for the modern city dweller." },
-  "ethnic-wear": { title: "Ethnic Wear", matches: ["Ethnic Wear"], description: "Heritage silhouettes reimagined for the contemporary gentleman." },
-  "blazers": { title: "Blazers", matches: ["Oversized Luxury", "Tailored Suits"], description: "Statement blazers cut for boardrooms and ballrooms alike." },
-  "casual-essentials": { title: "Casual Essentials", matches: ["Knitwear Essentials", "Premium Shirts"], description: "Refined weekend pieces — effortless, never careless." },
-  "accessories": { title: "Accessories", matches: ["Accessories"], description: "The final note: silk ties, leather goods, and bespoke pocket squares." },
+const CATEGORY_COPY: Record<string, string> = {
+  "Tailored Suits": "Sculpted silhouettes engineered for the gentleman who measures success in millimetres.",
+  "Premium Shirts": "Sea Island and Egyptian cotton, hand-finished placards, mother-of-pearl buttons.",
+  "Oversized Luxury": "Relaxed proportions in noble fabrics — quiet luxury redefined.",
+  "Modern Formalwear": "Tuxedos and three-piece compositions for the most discerning evenings.",
+  "Knitwear Essentials": "Mongolian cashmere and silk-cashmere blends, knit to last lifetimes.",
+  "Street Luxury": "Hooded overcoats, velour and elevated daywear for the modern city dweller.",
+  "Ethnic Wear": "Heritage silhouettes reimagined for the contemporary gentleman.",
+  Accessories: "The final note: silk pocket squares, leather goods, and decisive finishing touches.",
 };
+
+const CATEGORY_IMAGES: Record<string, string> = {
+  "Tailored Suits": suits,
+  "Premium Shirts": shirts,
+  "Oversized Luxury": oversized,
+  "Modern Formalwear": formal,
+  "Knitwear Essentials": knitwear,
+  "Street Luxury": street,
+  "Ethnic Wear": ethnic,
+  Accessories: accessories,
+};
+
+const LEGACY_SLUGS: Record<string, string> = {
+  knitwear: "knitwear-essentials",
+  "streetwear-elite": "street-luxury",
+  blazers: "modern-formalwear",
+  "casual-essentials": "knitwear-essentials",
+};
+
+const resolveCategory = (slug: string) => getCategoryBySlug(LEGACY_SLUGS[slug] ?? slug);
 
 export const Route = createFileRoute("/category/$slug")({
   head: ({ params }) => {
