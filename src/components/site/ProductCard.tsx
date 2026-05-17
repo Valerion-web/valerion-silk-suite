@@ -104,7 +104,6 @@ export function ProductCard({ product, index = 0 }: { product: Product; index?: 
             <p className="font-serif text-lg">${product.price.toLocaleString()}</p>
           </div>
         </Link>
-      </Link>
     </motion.div>
   );
 }
