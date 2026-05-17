@@ -238,8 +238,8 @@ function ShopPage() {
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h4 className="text-[11px] tracking-luxury uppercase text-gold mb-4 pb-3 border-b border-gold/15">{title}</h4>
-      <div className="space-y-2">{children}</div>
+      <h4 className="text-[10px] tracking-luxury uppercase text-gold mb-2.5 pb-2 border-b border-gold/15">{title}</h4>
+      <div>{children}</div>
     </div>
   );
 }
@@ -248,21 +248,9 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
   return (
     <button
       onClick={onClick}
-      className={`px-3 h-9 border text-[10px] tracking-luxury uppercase transition-all ${active ? "border-gold bg-gold text-midnight" : "border-border hover:border-gold hover:text-gold"}`}
+      className={`px-2.5 h-7 border text-[10px] tracking-luxury uppercase transition-all ${active ? "border-gold bg-gold text-midnight" : "border-border hover:border-gold hover:text-gold"}`}
     >
       {children}
-    </button>
-  );
-}
-
-function SelectableRow({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center justify-between w-full text-left text-sm py-1.5 link-underline ${active ? "text-gold" : "text-foreground"}`}
-    >
-      <span>{children}</span>
-      {active && <Check className="h-3 w-3 text-gold" />}
     </button>
   );
 }
