@@ -44,6 +44,12 @@ export const products: Product[] = [
   { id: "valerion-010", name: "Roma Cashmere Polo", category: "Knitwear Essentials", price: 480, image: knitwear, altImage: shirts, colors: ["#071120", "#F8FAFC"], sizes: ["S", "M", "L", "XL"], fabric: "Cashmere Silk", description },
   { id: "valerion-011", name: "Oversized Wool Coat", category: "Oversized Luxury", price: 2190, image: oversized, altImage: street, badge: "Limited", colors: ["#0A1931"], sizes: ["S", "M", "L"], fabric: "Double-Faced Cashmere", description },
   { id: "valerion-012", name: "Velour Lounge Hoodie", category: "Street Luxury", price: 590, image: street, altImage: knitwear, colors: ["#000", "#0A1931"], sizes: ["S", "M", "L", "XL"], fabric: "Cotton Velour", description },
+  { id: "valerion-013", name: "Royal Sherwani Noir", category: "Ethnic Wear", price: 1980, image: formal, altImage: suits, badge: "Limited", colors: ["#0A1931", "#000"], sizes: ["46", "48", "50", "52"], fabric: "Silk Brocade", description },
+  { id: "valerion-014", name: "Bandhgala Heritage Coat", category: "Ethnic Wear", price: 1690, image: suits, altImage: formal, colors: ["#071120", "#1E3A8A"], sizes: ["46", "48", "50"], fabric: "Raw Silk", description },
+  { id: "valerion-015", name: "Ivory Kurta Set", category: "Ethnic Wear", price: 890, image: shirts, altImage: knitwear, badge: "New", colors: ["#F8FAFC", "#D4AF37"], sizes: ["S", "M", "L", "XL"], fabric: "Silk Cotton", description },
+  { id: "valerion-016", name: "Gold Silk Pocket Square", category: "Accessories", price: 180, image: shirts, altImage: formal, colors: ["#D4AF37", "#F8FAFC"], sizes: ["One Size"], fabric: "Pure Silk", description },
+  { id: "valerion-017", name: "Midnight Leather Belt", category: "Accessories", price: 290, image: street, altImage: oversized, colors: ["#000", "#0A1931"], sizes: ["32", "34", "36", "38"], fabric: "Italian Calf Leather", description },
+  { id: "valerion-018", name: "Cashmere Bouclé Cardigan", category: "Knitwear Essentials", price: 820, image: knitwear, altImage: oversized, badge: "New", colors: ["#071120", "#C9B99A"], sizes: ["S", "M", "L", "XL"], fabric: "Cashmere Bouclé", description },
 ];
 
 export const categories = [
@@ -54,6 +60,8 @@ export const categories = [
   "Modern Formalwear",
   "Knitwear Essentials",
   "Street Luxury",
+  "Ethnic Wear",
+  "Accessories",
 ];
 
 export const sizes = ["S", "M", "L", "XL", "46", "48", "50", "52", "54"];
