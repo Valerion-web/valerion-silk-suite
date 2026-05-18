@@ -16,13 +16,13 @@ const links = [
   { to: "/track-order", label: "Track Order" },
 ];
 
-const shopMenu = [
-  { label: "New Arrivals", to: "/shop", search: "new" },
-  { label: "Best Sellers", to: "/shop", search: "best" },
-  { label: "Premium Shirts", to: "/category/premium-shirts" },
-  { label: "Ethnic Wear", to: "/category/ethnic-wear" },
-  { label: "Formal Wear", to: "/category/modern-formalwear" },
-  { label: "Accessories", to: "/category/accessories" },
+const shopMenu: { label: string; slug?: string; to?: "/shop" }[] = [
+  { label: "New Arrivals", to: "/shop" },
+  { label: "Best Sellers", to: "/shop" },
+  { label: "Premium Shirts", slug: "premium-shirts" },
+  { label: "Ethnic Wear", slug: "ethnic-wear" },
+  { label: "Formal Wear", slug: "modern-formalwear" },
+  { label: "Accessories", slug: "accessories" },
 ];
 
 export function Navbar() {
