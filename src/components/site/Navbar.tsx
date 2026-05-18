@@ -164,21 +164,23 @@ export function Navbar() {
           {hoverMega === "shop" && (
             <MegaPanel onClose={() => setHoverMega(null)}>
               <div className="grid grid-cols-2 gap-x-12 gap-y-3 max-w-md">
-                {shopMenu.map((m, i) => (
-                  <motion.div
-                    key={m.label}
-                    initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.04 }}
-                  >
-                    <Link
-                      to={m.to}
-                      onClick={() => setHoverMega(null)}
-                      className="group block text-[12px] tracking-[0.22em] uppercase text-frost/80 hover:text-gold py-1.5 transition-colors"
+                {shopMenu.map((m, i) => {
+                  const cls = "group block text-[12px] tracking-[0.22em] uppercase text-frost/80 hover:text-gold py-1.5 transition-colors";
+                  const inner = <span className="inline-block group-hover:translate-x-1 transition-transform duration-500">{m.label}</span>;
+                  return (
+                    <motion.div
+                      key={m.label}
+                      initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.04 }}
                     >
-                      <span className="inline-block group-hover:translate-x-1 transition-transform duration-500">{m.label}</span>
-                    </Link>
-                  </motion.div>
-                ))}
+                      {m.slug ? (
+                        <Link to="/category/$slug" params={{ slug: m.slug }} onClick={() => setHoverMega(null)} className={cls}>{inner}</Link>
+                      ) : (
+                        <Link to={m.to!} onClick={() => setHoverMega(null)} className={cls}>{inner}</Link>
+                      )}
+                    </motion.div>
+                  );
+                })}
               </div>
             </MegaPanel>
           )}
