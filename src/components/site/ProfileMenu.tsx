@@ -80,9 +80,9 @@ export function ProfileMenu({ onDark }: { onDark: boolean }) {
 
 function SignedIn({ user, onClose, onSignOut }: { user: { name: string; email: string; phone?: string; avatar?: string; address?: string }; onClose: () => void; onSignOut: () => void }) {
   const initials = user.name.split(" ").map((s) => s[0]).join("").slice(0, 2).toUpperCase();
-  const items: { to: string; label: string; icon: typeof Package }[] = [
+  const items: { to: string; label: string; icon: typeof Package; internal?: boolean }[] = [
     { to: "/account/orders", label: "My Orders", icon: Package },
-    { to: "/wishlist", label: "Wishlist", icon: Heart },
+    { to: "/wishlist", label: "Wishlist", icon: Heart, internal: true },
     { to: "/account/recent", label: "Recently Viewed", icon: Clock },
     { to: "/account/addresses", label: "Saved Addresses", icon: MapPin },
     { to: "/account/payments", label: "Payment Methods", icon: CreditCard },
@@ -107,18 +107,21 @@ function SignedIn({ user, onClose, onSignOut }: { user: { name: string; email: s
       </div>
 
       <nav className="py-2">
-        {items.map((it) => (
-          <Link
-            key={it.to}
-            to={it.to}
-            onClick={onClose}
-            className="group flex items-center gap-3 px-5 py-2.5 text-[12px] tracking-[0.14em] uppercase text-frost/80 hover:text-gold transition-colors"
-          >
-            <it.icon className="h-[14px] w-[14px] text-gold/60 group-hover:text-gold transition-colors" />
-            <span className="flex-1">{it.label}</span>
-            <span className="opacity-0 group-hover:opacity-100 text-gold transition-opacity">→</span>
-          </Link>
-        ))}
+        {items.map((it) => {
+          const cls = "group flex items-center gap-3 px-5 py-2.5 text-[12px] tracking-[0.14em] uppercase text-frost/80 hover:text-gold transition-colors";
+          const inner = (
+            <>
+              <it.icon className="h-[14px] w-[14px] text-gold/60 group-hover:text-gold transition-colors" />
+              <span className="flex-1">{it.label}</span>
+              <span className="opacity-0 group-hover:opacity-100 text-gold transition-opacity">→</span>
+            </>
+          );
+          return it.internal ? (
+            <Link key={it.to} to={it.to} onClick={onClose} className={cls}>{inner}</Link>
+          ) : (
+            <a key={it.to} href={it.to} onClick={onClose} className={cls}>{inner}</a>
+          );
+        })}
       </nav>
 
       <div className="border-t border-gold/15 px-3 py-3">
