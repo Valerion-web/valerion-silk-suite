@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Link } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import {
   User as UserIcon,
   Package,
@@ -258,3 +258,5 @@ function Field({ icon: Icon, type, placeholder, value, onChange, required }: { i
     </div>
   );
 }
+
+export default ProfileMenu;

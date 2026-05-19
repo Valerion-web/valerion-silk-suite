@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Link } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import { Heart, Eye, Star, ShoppingBag } from "lucide-react";
 import type { Product } from "@/lib/products";
 import { useShop } from "@/lib/store";
@@ -107,3 +107,5 @@ export function ProductCard({ product, index = 0 }: { product: Product; index?: 
     </motion.div>
   );
 }
+
+export default ProductCard;

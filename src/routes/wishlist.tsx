@@ -1,13 +1,11 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import { Heart, X, ShoppingBag } from "lucide-react";
 import { findProduct } from "@/lib/products";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
 import { motion } from "framer-motion";
 import { useShop } from "@/lib/store";
 
-export const Route = createFileRoute("/wishlist")({
-  component: WishlistPage,
-});
+
 
 function WishlistPage() {
   const { wishlist, removeFromWishlist, addToCart } = useShop();
@@ -79,3 +77,5 @@ function Empty() {
     </div>
   );
 }
+
+export default WishlistPage;

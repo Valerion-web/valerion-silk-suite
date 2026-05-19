@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Link } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import { X } from "lucide-react";
 
 export function MobileMenu({ onClose, links }: { onClose: () => void; links: { to: string; label: string }[] }) {
@@ -35,3 +35,5 @@ export function MobileMenu({ onClose, links }: { onClose: () => void; links: { t
     </motion.div>
   );
 }
+
+export default MobileMenu;

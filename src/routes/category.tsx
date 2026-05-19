@@ -1,4 +1,4 @@
-import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { Link, Outlet, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowUpRight } from "lucide-react";
 import { PageHeader, PageShell } from "@/components/site/PageShell";
@@ -13,17 +13,7 @@ import casual from "@/assets/cat-casual.jpg";
 import accessories from "@/assets/cat-accessories.jpg";
 import { categories, getProductsByCategorySlug, slugifyCategory } from "@/lib/products";
 
-export const Route = createFileRoute("/category")({
-  head: () => ({
-    meta: [
-      { title: "Category — House of Valerion" },
-      { name: "description", content: "Discover the world of House of Valerion through our curated luxury menswear categories." },
-      { property: "og:title", content: "Category — House of Valerion" },
-      { property: "og:description", content: "Tailored suits, premium shirts, oversized luxury, ethnic wear and more." },
-    ],
-  }),
-  component: CategoryPage,
-});
+
 
 const CATEGORY_VISUALS: Record<string, { image: string; span: string }> = {
   "Tailored Suits": { image: suits, span: "lg:row-span-2" },
@@ -45,7 +35,7 @@ const CATEGORIES = categories
   });
 
 function CategoryPage() {
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const pathname = useLocation({ select: (state) => state.location.pathname });
 
   if (pathname !== "/category") return <Outlet />;
 
@@ -95,7 +85,7 @@ function CategoryCard({
       transition={{ duration: 0.9, delay: index * 0.07, ease: [0.22, 1, 0.36, 1] }}
       className={`group relative overflow-hidden bg-midnight ${cat.span}`}
     >
-      <Link to="/category/$slug" params={{ slug: cat.id }} className="block h-full w-full">
+      <Link to={`/category/${cat.id}`} className="block h-full w-full">
         <div className="absolute inset-0 hover-zoom-parent">
           <img
             src={cat.image}
@@ -138,3 +128,5 @@ function CategoryCard({
     </motion.div>
   );
 }
+
+export default CategoryPage;

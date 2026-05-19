@@ -227,3 +227,5 @@ export {
   MenubarSub,
   MenubarShortcut,
 };
+
+export default MenubarMenu;

@@ -175,3 +175,5 @@ function CalendarDayButton({
 }
 
 export { Calendar, CalendarDayButton };
+
+export default Calendar;

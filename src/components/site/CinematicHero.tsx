@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import {
   AnimatePresence,
   motion,
@@ -389,3 +389,5 @@ function ShimmerHeading({ text }: { text: string }) {
     </span>
   );
 }
+
+export default CinematicHero;

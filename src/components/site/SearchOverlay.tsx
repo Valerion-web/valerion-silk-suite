@@ -46,3 +46,5 @@ export function SearchOverlay({ onClose }: { onClose: () => void }) {
     </motion.div>
   );
 }
+
+export default SearchOverlay;

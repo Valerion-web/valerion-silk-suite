@@ -1,19 +1,10 @@
-import { createFileRoute } from "@tanstack/react-router";
+;
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Mail, Phone, MapPin, MessageCircle, Instagram, Twitter, CheckCircle2, Clock } from "lucide-react";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
 
-export const Route = createFileRoute("/contact")({
-  head: () => ({
-    meta: [
-      { title: "Contact — House of Valerion" },
-      { name: "description", content: "Speak with the House of Valerion atelier. Private appointments, custom commissions, client care." },
-      { property: "og:title", content: "Contact — House of Valerion" },
-    ],
-  }),
-  component: ContactPage,
-});
+
 
 function ContactPage() {
   const [sent, setSent] = useState(false);
@@ -168,3 +159,5 @@ function Info({ Icon, primary, secondary }: { Icon: typeof Mail; primary: string
     </div>
   );
 }
+
+export default ContactPage;

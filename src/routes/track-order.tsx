@@ -1,19 +1,10 @@
-import { createFileRoute } from "@tanstack/react-router";
+;
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Package, Search, Truck, CheckCircle2, Sparkles } from "lucide-react";
 import { PageHeader, PageShell } from "@/components/site/PageShell";
 
-export const Route = createFileRoute("/track-order")({
-  head: () => ({
-    meta: [
-      { title: "Track Order — House of Valerion" },
-      { name: "description", content: "Follow your House of Valerion order from atelier to doorstep." },
-      { property: "og:title", content: "Track Order — House of Valerion" },
-    ],
-  }),
-  component: TrackOrderPage,
-});
+
 
 const STAGES = [
   { icon: Sparkles, label: "Order Confirmed", date: "Mar 14 · 10:24" },
@@ -117,3 +108,5 @@ function TrackOrderPage() {
     </>
   );
 }
+
+export default TrackOrderPage;

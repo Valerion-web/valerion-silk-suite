@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import { Instagram, Twitter, Facebook, Youtube } from "lucide-react";
 
 export function Footer() {
@@ -75,3 +75,5 @@ export function Footer() {
     </footer>
   );
 }
+
+export default Footer;

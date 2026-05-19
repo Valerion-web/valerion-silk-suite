@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Lock, CreditCard, Smartphone, Wallet, Banknote, CheckCircle2, ChevronRight } from "lucide-react";
@@ -6,15 +6,7 @@ import { findProduct } from "@/lib/products";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
 import { useShop } from "@/lib/store";
 
-export const Route = createFileRoute("/checkout")({
-  head: () => ({
-    meta: [
-      { title: "Checkout — House of Valerion" },
-      { name: "description", content: "Secure checkout for House of Valerion. Premium shipping and discreet packaging." },
-    ],
-  }),
-  component: CheckoutPage,
-});
+
 
 const PAYMENT_METHODS = [
   { id: "card", label: "Credit / Debit Card", icon: CreditCard },
@@ -295,3 +287,5 @@ function Row({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+
+export default CheckoutPage;

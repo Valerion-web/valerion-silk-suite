@@ -25,3 +25,5 @@ export function PageHeader({ eyebrow, title, subtitle }: { eyebrow?: string; tit
     </section>
   );
 }
+
+export default PageShell;

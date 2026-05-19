@@ -145,3 +145,5 @@ export function SizeGuide({
     </Dialog>
   );
 }
+
+export default SizeGuide;

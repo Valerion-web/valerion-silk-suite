@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Heart, ShoppingBag, Menu, ChevronDown } from "lucide-react";
 import { SearchOverlay } from "./SearchOverlay";
@@ -30,7 +30,7 @@ export function Navbar() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [hoverMega, setHoverMega] = useState<"shop" | "collection" | null>(null);
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const pathname = useLocation({ select: (s) => s.location.pathname });
   const { cartCount, wishCount } = useShop();
 
   useEffect(() => {
@@ -174,7 +174,7 @@ export function Navbar() {
                       transition={{ delay: i * 0.04 }}
                     >
                       {m.slug ? (
-                        <Link to="/category/$slug" params={{ slug: m.slug }} onClick={() => setHoverMega(null)} className={cls}>{inner}</Link>
+                        <Link to={`/category/${m.slug}`} onClick={() => setHoverMega(null)} className={cls}>{inner}</Link>
                       ) : (
                         <Link to={m.to!} onClick={() => setHoverMega(null)} className={cls}>{inner}</Link>
                       )}
@@ -194,9 +194,7 @@ export function Navbar() {
                     initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: i * 0.05 }}
                   >
-                    <Link
-                      to="/category/$slug"
-                      params={{ slug: c.id }}
+                    <Link to={`/category/${c.id}`}
                       onClick={() => setHoverMega(null)}
                       className="group block"
                     >
@@ -251,3 +249,5 @@ function MegaPanel({ children, onClose }: { children: React.ReactNode; onClose: 
     </motion.div>
   );
 }
+
+export default Navbar;

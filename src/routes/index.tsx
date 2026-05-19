@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import { motion, useScroll, useTransform } from "framer-motion";
 import { useRef } from "react";
 import { ArrowRight, Star } from "lucide-react";
@@ -9,9 +9,7 @@ import { ProductCard } from "@/components/site/ProductCard";
 import { SectionHeading } from "@/components/site/SectionHeading";
 import { CinematicHero } from "@/components/site/CinematicHero";
 
-export const Route = createFileRoute("/")({
-  component: Index,
-});
+
 
 function Index() {
   return (
@@ -246,3 +244,5 @@ function Newsletter() {
     </section>
   );
 }
+
+export default Index;

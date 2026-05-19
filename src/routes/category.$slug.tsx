@@ -1,4 +1,4 @@
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ChevronRight, Sparkles } from "lucide-react";
 import { categories, getCategoryBySlug, getProductsByCategorySlug, slugifyCategory } from "@/lib/products";
@@ -44,35 +44,12 @@ const LEGACY_SLUGS: Record<string, string> = {
 
 const resolveCategory = (slug: string) => getCategoryBySlug(LEGACY_SLUGS[slug] ?? slug);
 
-export const Route = createFileRoute("/category/$slug")({
-  head: ({ params }) => {
-    const category = resolveCategory(params.slug);
-    const title = category ? `${category} — House of Valerion` : "Category — House of Valerion";
-    return {
-      meta: [
-        { title },
-        { name: "description", content: category ? CATEGORY_COPY[category] : "Discover the House of Valerion collection." },
-        { property: "og:title", content: title },
-      ],
-    };
-  },
-  component: CategorySlugPage,
-  notFoundComponent: () => (
-    <div className="min-h-[60vh] grid place-items-center">
-      <div className="text-center">
-        <h1 className="font-display text-4xl">Category not found</h1>
-        <Link to="/category" className="mt-6 inline-block text-gold link-underline text-[11px] tracking-luxury uppercase">
-          Browse all categories
-        </Link>
-      </div>
-    </div>
-  ),
-});
+
 
 function CategorySlugPage() {
-  const { slug } = Route.useParams();
+  const { slug } = useParams();
   const category = resolveCategory(slug);
-  if (!category) throw notFound();
+  if (!category) return <div>Not found</div>;
 
   const resolvedSlug = slugifyCategory(category);
   const items = getProductsByCategorySlug(resolvedSlug);
@@ -155,7 +132,7 @@ function CategorySlugPage() {
                   viewport={{ once: true, margin: "-50px" }}
                   transition={{ duration: 0.6, delay: i * 0.06 }}
                 >
-                  <Link to="/category/$slug" params={{ slug: c.id }} className="group block relative overflow-hidden aspect-[3/4] bg-midnight">
+                  <Link to={`/category/${c.id}`} className="group block relative overflow-hidden aspect-[3/4] bg-midnight">
                     <img src={c.image} alt={c.title} className="absolute inset-0 h-full w-full object-cover opacity-85 group-hover:opacity-100 group-hover:scale-105 transition-all duration-700" />
                     <div className="absolute inset-0 bg-gradient-to-t from-midnight via-midnight/40 to-transparent" />
                     <div className="absolute bottom-6 left-6 right-6 text-frost">
@@ -172,3 +149,5 @@ function CategorySlugPage() {
     </>
   );
 }
+
+export default CategorySlugPage;

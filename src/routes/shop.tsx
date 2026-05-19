@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+;
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Sparkles, Flame, Star, X, Check } from "lucide-react";
@@ -6,16 +6,7 @@ import { products } from "@/lib/products";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
 
-export const Route = createFileRoute("/shop")({
-  head: () => ({
-    meta: [
-      { title: "Shop — House of Valerion" },
-      { name: "description", content: "The complete edit of luxury menswear. Tailored suits, premium shirts, knitwear and street luxury." },
-      { property: "og:title", content: "Shop — House of Valerion" },
-    ],
-  }),
-  component: ShopPage,
-});
+
 
 const FABRICS = ["Italian Wool", "Egyptian Cotton", "Cashmere", "Silk", "Linen", "Cotton Velour", "Velvet", "Satin"];
 const FITS = ["Slim", "Tailored", "Regular", "Oversized"];
@@ -254,3 +245,5 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
     </button>
   );
 }
+
+export default ShopPage;

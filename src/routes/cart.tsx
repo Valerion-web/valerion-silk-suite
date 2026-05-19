@@ -1,12 +1,10 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "react-router-dom";
 import { Plus, Minus, X, ArrowRight } from "lucide-react";
 import { findProduct } from "@/lib/products";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
 import { useShop } from "@/lib/store";
 
-export const Route = createFileRoute("/cart")({
-  component: CartPage,
-});
+
 
 function CartPage() {
   const { cart, updateQty, removeFromCart } = useShop();
@@ -105,3 +103,5 @@ function Row({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+
+export default CartPage;

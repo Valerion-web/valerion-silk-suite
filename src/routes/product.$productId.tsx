@@ -1,4 +1,4 @@
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import { useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -21,27 +21,12 @@ import { SizeGuide } from "@/components/site/SizeGuide";
 import { useShop } from "@/lib/store";
 import { toast } from "sonner";
 
-export const Route = createFileRoute("/product/$productId")({
-  component: ProductPage,
-  notFoundComponent: () => (
-    <div className="min-h-[60vh] grid place-items-center">
-      <div className="text-center">
-        <h1 className="font-display text-4xl">Piece not found</h1>
-        <Link
-          to="/shop"
-          className="mt-6 inline-block text-gold link-underline text-[11px] tracking-luxury uppercase"
-        >
-          Back to shop
-        </Link>
-      </div>
-    </div>
-  ),
-});
+
 
 function ProductPage() {
-  const { productId } = Route.useParams();
+  const { productId } = useParams();
   const product = findProduct(productId);
-  if (!product) throw notFound();
+  if (!product) return <div>Not found</div>;
 
   const gallery = [
     product.image,
@@ -474,3 +459,5 @@ function Detail({
     </div>
   );
 }
+
+export default ProductPage;

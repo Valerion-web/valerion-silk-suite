@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 import storyImg from "@/assets/story.jpg";
@@ -6,16 +6,7 @@ import experienceImg from "@/assets/experience.jpg";
 import suitsImg from "@/assets/collection-suits.jpg";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
 
-export const Route = createFileRoute("/about")({
-  head: () => ({
-    meta: [
-      { title: "The Atelier — House of Valerion" },
-      { name: "description", content: "Three generations of Milanese tailoring. Discover the philosophy behind House of Valerion." },
-      { property: "og:title", content: "The Atelier — House of Valerion" },
-    ],
-  }),
-  component: AboutPage,
-});
+
 
 function AboutPage() {
   return (
@@ -115,3 +106,5 @@ function AboutPage() {
     </>
   );
 }
+
+export default AboutPage;
