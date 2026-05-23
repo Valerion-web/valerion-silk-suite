@@ -37,7 +37,7 @@ function WishlistPage() {
                   >
                     <X className="h-4 w-4" />
                   </button>
-                  <Link to="/product/$productId" params={{ productId: p.id }} className="block aspect-[3/4] overflow-hidden hover-zoom-parent">
+                  <Link to={`/product/${p.id}`} className="block aspect-[3/4] overflow-hidden hover-zoom-parent">
                     <img src={p.image} alt={p.name} loading="lazy" className="h-full w-full object-cover hover-zoom-img" />
                   </Link>
                   <div className="p-6">

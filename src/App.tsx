@@ -1,5 +1,6 @@
+import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 
 import { Navbar } from "@/components/site/Navbar";
 import { Footer } from "@/components/site/Footer";
@@ -28,6 +29,7 @@ function App() {
       <AuthProvider>
         <ShopProvider>
           <BrowserRouter>
+            <ScrollToTop />
             <div className="min-h-screen flex flex-col bg-background">
               <Navbar />
               <div className="flex-1">
@@ -36,6 +38,9 @@ function App() {
                   <Route path="/about" element={<About />} />
                   <Route path="/shop" element={<Shop />} />
                   <Route path="/category" element={<Category />}>
+                    <Route path=":slug" element={<CategorySlug />} />
+                  </Route>
+                  <Route path="/collection" element={<Category />}>
                     <Route path=":slug" element={<CategorySlug />} />
                   </Route>
                   <Route path="/product/:productId" element={<Product />} />
@@ -70,6 +75,16 @@ function App() {
 }
 
 export default App;
+
+function ScrollToTop() {
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [pathname]);
+
+  return null;
+}
 
 function NotFoundComponent() {
   return (

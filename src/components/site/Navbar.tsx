@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Heart, ShoppingBag, Menu, ChevronDown } from "lucide-react";
+import { Search, Heart, ShoppingBag, Menu } from "lucide-react";
 import { SearchOverlay } from "./SearchOverlay";
 import { MobileMenu } from "./MobileMenu";
 import { ProfileMenu } from "./ProfileMenu";
+import BrandLogo from "@/components/common/BrandLogo";
 import { useShop } from "@/lib/store";
-import { collections } from "@/lib/products";
 
 const links = [
   { to: "/shop", label: "Shop", mega: "shop" as const },
-  { to: "/category", label: "Collection", mega: "collection" as const },
+  { to: "/collection", label: "Collection" },
   { to: "/about", label: "About" },
   { to: "/contact", label: "Contact" },
   { to: "/track-order", label: "Track Order" },
@@ -26,92 +26,88 @@ const shopMenu: { label: string; slug?: string; to?: "/shop" }[] = [
 ];
 
 export function Navbar() {
-  const [scrolled, setScrolled] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [hoverMega, setHoverMega] = useState<"shop" | "collection" | null>(null);
+  const [hoverMega, setHoverMega] = useState<"shop" | null>(null);
+  const [scrolled, setScrolled] = useState(false);
   const pathname = useLocation({ select: (s) => s.location.pathname });
   const { cartCount, wishCount } = useShop();
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 30);
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+    const handleScroll = () => {
+      setScrolled(window.scrollY > 40);
+    };
 
-  // Always dark navy navbar now
-  const onDark = true;
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   return (
     <>
-      <motion.header
-        initial={{ y: -40, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
-        className="fixed inset-x-0 top-0 z-50 transition-all duration-700"
-        style={{
-          background: scrolled
-            ? "linear-gradient(180deg, oklch(0.13 0.05 258 / 0.92) 0%, oklch(0.10 0.05 258 / 0.88) 100%)"
-            : "linear-gradient(180deg, oklch(0.13 0.05 258 / 0.78) 0%, oklch(0.10 0.05 258 / 0.55) 100%)",
-          backdropFilter: "blur(20px) saturate(1.4)",
-          WebkitBackdropFilter: "blur(20px) saturate(1.4)",
-          borderBottom: scrolled ? "1px solid oklch(0.78 0.13 85 / 0.28)" : "1px solid oklch(0.78 0.13 85 / 0.12)",
-          boxShadow: scrolled
-            ? "0 12px 40px -10px oklch(0 0 0 / 0.5), 0 1px 0 oklch(0.78 0.13 85 / 0.1) inset"
-            : "0 6px 24px -8px oklch(0 0 0 / 0.4)",
-        }}
-        onMouseLeave={() => setHoverMega(null)}
-        key={pathname}
-      >
-        <div className="mx-auto flex h-20 max-w-[1600px] items-center justify-between px-6 lg:px-12">
-          {/* LEFT — LOGO */}
-          <Link to="/" className="group flex items-center shrink-0">
-            <div className="leading-none">
-              <div className="text-[8px] md:text-[9px] tracking-wider-luxury mb-1 text-gold/80">
-                HOUSE OF
-              </div>
-              <motion.div
-                whileHover={{ letterSpacing: "0.22em" }}
-                transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-                className="relative font-display text-2xl md:text-[28px] tracking-[0.16em] text-gradient-gold"
-                style={{ textShadow: "0 0 24px oklch(0.78 0.13 85 / 0.35)" }}
-              >
-                VALERION
-                <span aria-hidden className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-700 text-gradient-gold blur-[6px]">
-                  VALERION
-                </span>
-              </motion.div>
-            </div>
-          </Link>
+      <header className={`navbar ${scrolled ? "navbar-scrolled" : ""}`} onMouseLeave={() => setHoverMega(null)} key={pathname}>
+        <div className="navbar-inner">
+          {/* LEFT — SHOP & COLLECTION */}
+          <div className="nav-left">
+            <Link
+              to="/shop"
+              className="group relative text-[11px] uppercase tracking-luxury font-medium text-frost/85 hover:text-gold transition-all duration-500 flex items-center gap-1"
+            >
+              <span className="relative">
+                SHOP
+                <span className="pointer-events-none absolute -bottom-2 left-0 h-px w-full origin-right scale-x-0 bg-gradient-to-r from-transparent via-gold to-transparent transition-transform duration-700 ease-out group-hover:origin-left group-hover:scale-x-100" />
+              </span>
+            </Link>
+            <Link
+              to="/category"
+              className="group relative text-[11px] uppercase tracking-luxury font-medium text-frost/85 hover:text-gold transition-all duration-500 flex items-center gap-1"
+            >
+              <span className="relative">
+                COLLECTION
+                <span className="pointer-events-none absolute -bottom-2 left-0 h-px w-full origin-right scale-x-0 bg-gradient-to-r from-transparent via-gold to-transparent transition-transform duration-700 ease-out group-hover:origin-left group-hover:scale-x-100" />
+              </span>
+            </Link>
+          </div>
 
-          {/* RIGHT — NAV + ICONS */}
-          <div className="flex items-center gap-8">
-            <nav className="hidden lg:flex items-center gap-9">
-              {links.map((l) => (
-                <div
-                  key={l.to}
-                  className="relative"
-                  onMouseEnter={() => l.mega && setHoverMega(l.mega)}
-                >
-                  <Link
-                    to={l.to}
-                    className="group relative text-[11px] uppercase tracking-luxury font-medium text-frost/85 hover:text-gold transition-all duration-500 flex items-center gap-1"
-                    activeProps={{ className: "text-gold" }}
-                  >
-                    <span className="relative">
-                      {l.label}
-                      <span className="pointer-events-none absolute -bottom-2 left-0 h-px w-full origin-right scale-x-0 bg-gradient-to-r from-transparent via-gold to-transparent transition-transform duration-700 ease-out group-hover:origin-left group-hover:scale-x-100" />
-                    </span>
-                    {l.mega && <ChevronDown className="h-3 w-3 opacity-60" />}
-                  </Link>
-                </div>
-              ))}
+          {/* CENTER — Brand Logo */}
+          <div className="nav-center">
+            <BrandLogo />
+          </div>
+
+          {/* RIGHT — ABOUT, CONTACT, TRACK ORDER, Icons */}
+          <div className="nav-right">
+            <nav className="nav-links">
+              <Link
+                to="/about"
+                className="group relative text-[11px] uppercase tracking-luxury font-medium text-frost/85 hover:text-gold transition-all duration-500 flex items-center gap-1"
+              >
+                <span className="relative">
+                  ABOUT
+                  <span className="pointer-events-none absolute -bottom-2 left-0 h-px w-full origin-right scale-x-0 bg-gradient-to-r from-transparent via-gold to-transparent transition-transform duration-700 ease-out group-hover:origin-left group-hover:scale-x-100" />
+                </span>
+              </Link>
+              <Link
+                to="/contact"
+                className="group relative text-[11px] uppercase tracking-luxury font-medium text-frost/85 hover:text-gold transition-all duration-500 flex items-center gap-1"
+              >
+                <span className="relative">
+                  CONTACT
+                  <span className="pointer-events-none absolute -bottom-2 left-0 h-px w-full origin-right scale-x-0 bg-gradient-to-r from-transparent via-gold to-transparent transition-transform duration-700 ease-out group-hover:origin-left group-hover:scale-x-100" />
+                </span>
+              </Link>
+              <Link
+                to="/track-order"
+                className="group relative text-[11px] uppercase tracking-luxury font-medium text-frost/85 hover:text-gold transition-all duration-500 flex items-center gap-1"
+              >
+                <span className="relative">
+                  TRACK ORDER
+                  <span className="pointer-events-none absolute -bottom-2 left-0 h-px w-full origin-right scale-x-0 bg-gradient-to-r from-transparent via-gold to-transparent transition-transform duration-700 ease-out group-hover:origin-left group-hover:scale-x-100" />
+                </span>
+              </Link>
             </nav>
 
-            <div className="hidden md:block h-6 w-px bg-frost/20" />
+            <div className="nav-divider" />
 
-            <div className="flex items-center gap-5 text-frost">
+            <div className="nav-icons">
               <button
                 onClick={() => setSearchOpen(true)}
                 aria-label="Search"
@@ -132,7 +128,7 @@ export function Navbar() {
                   </motion.span>
                 )}
               </Link>
-              <ProfileMenu onDark={onDark} />
+              <ProfileMenu onDark={true} />
               <Link to="/cart" aria-label="Cart" className="relative hover:text-gold hover:drop-shadow-[0_0_8px_rgba(212,175,55,0.6)] transition-all">
                 <ShoppingBag className="h-[18px] w-[18px]" />
                 {cartCount > 0 && (
@@ -157,8 +153,6 @@ export function Navbar() {
           </div>
         </div>
 
-        <div className="pointer-events-none absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-gold/40 to-transparent" />
-
         {/* MEGA MENUS */}
         <AnimatePresence>
           {hoverMega === "shop" && (
@@ -174,7 +168,7 @@ export function Navbar() {
                       transition={{ delay: i * 0.04 }}
                     >
                       {m.slug ? (
-                        <Link to={`/category/${m.slug}`} onClick={() => setHoverMega(null)} className={cls}>{inner}</Link>
+                        <Link to={`/collection/${m.slug}`} onClick={() => setHoverMega(null)} className={cls}>{inner}</Link>
                       ) : (
                         <Link to={m.to!} onClick={() => setHoverMega(null)} className={cls}>{inner}</Link>
                       )}
@@ -184,40 +178,8 @@ export function Navbar() {
               </div>
             </MegaPanel>
           )}
-
-          {hoverMega === "collection" && (
-            <MegaPanel onClose={() => setHoverMega(null)}>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-5">
-                {collections.slice(0, 6).map((c, i) => (
-                  <motion.div
-                    key={c.id}
-                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.05 }}
-                  >
-                    <Link to={`/category/${c.id}`}
-                      onClick={() => setHoverMega(null)}
-                      className="group block"
-                    >
-                      <div className="relative aspect-[4/5] overflow-hidden border border-gold/15 group-hover:border-gold/50 transition-colors">
-                        <img
-                          src={c.image}
-                          alt={c.title}
-                          className="absolute inset-0 h-full w-full object-cover transition-transform duration-1000 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-110"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-midnight/90 via-midnight/30 to-transparent" />
-                        <div className="absolute bottom-3 left-3 right-3">
-                          <div className="text-[9px] tracking-[0.3em] uppercase text-gold/80">{c.count} pieces</div>
-                          <div className="font-display text-sm text-frost group-hover:text-gold transition-colors mt-0.5">{c.title}</div>
-                        </div>
-                      </div>
-                    </Link>
-                  </motion.div>
-                ))}
-              </div>
-            </MegaPanel>
-          )}
         </AnimatePresence>
-      </motion.header>
+      </header>
 
       <AnimatePresence>{searchOpen && <SearchOverlay onClose={() => setSearchOpen(false)} />}</AnimatePresence>
       <AnimatePresence>{menuOpen && <MobileMenu onClose={() => setMenuOpen(false)} links={links.map(({to,label})=>({to,label}))} />}</AnimatePresence>

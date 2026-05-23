@@ -36,9 +36,8 @@ function AboutPage() {
           </div>
         </section>
 
-        <section className="mt-32 bg-gradient-navy text-frost py-24 relative overflow-hidden">
-          <div className="absolute inset-0 bg-radial-gold opacity-50" />
-          <div className="film-grain absolute inset-0" />
+        <section className="mt-32 bg-background text-[#111827] py-24 relative overflow-hidden border border-border rounded-[32px] shadow-card">
+          <div className="absolute inset-0 bg-radial-gold opacity-20" />
           <div className="relative mx-auto max-w-[1300px] px-6 lg:px-12">
             <div className="text-center max-w-2xl mx-auto">
               <p className="text-[10px] tracking-wider-luxury uppercase text-gold mb-6">— Three Pillars —</p>
@@ -77,15 +76,15 @@ function AboutPage() {
             <p className="mt-8 font-serif text-lg leading-relaxed text-muted-foreground">
               Our client is not loud. He is considered. He understands that a well-cut suit does not announce itself — it simply belongs. We dress entrepreneurs, architects, conductors, and creators. Men who choose carefully.
             </p>
-            <Link to="/shop" className="mt-10 inline-flex items-center gap-3 bg-midnight text-frost px-9 py-4 text-[11px] tracking-luxury uppercase hover:bg-gold hover:text-midnight transition-colors">
+            <Link to="/shop" className="mt-10 inline-flex items-center gap-3 bg-gold text-midnight px-9 py-4 text-[11px] tracking-luxury uppercase hover:bg-frost transition-colors">
               Discover the Collection <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
         </section>
 
-        <section className="mt-32 relative h-[60vh] min-h-[500px] overflow-hidden">
+        <section className="mt-32 relative h-[60vh] min-h-[500px] overflow-hidden rounded-[32px] border border-border">
           <img src={experienceImg} alt="" className="absolute inset-0 h-full w-full object-cover" />
-          <div className="absolute inset-0 bg-midnight/60" />
+          <div className="absolute inset-0 bg-white/30" />
           <div className="film-grain absolute inset-0" />
           <div className="relative h-full grid place-items-center text-center text-frost px-6">
             <motion.blockquote

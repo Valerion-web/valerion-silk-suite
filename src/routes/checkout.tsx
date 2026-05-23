@@ -226,13 +226,13 @@ function CheckoutPage() {
               </p>
               <div className="relative mt-8 flex flex-col gap-3">
                 <button
-                  onClick={() => { clearCart(); navigate({ to: "/track-order" }); }}
+                  onClick={() => { clearCart(); navigate("/track-order"); }}
                   className="bg-midnight text-frost px-8 py-3 text-[11px] tracking-luxury uppercase hover:bg-gold hover:text-midnight transition-colors"
                 >
                   Track Your Order
                 </button>
                 <button
-                  onClick={() => { clearCart(); navigate({ to: "/shop" }); }}
+                  onClick={() => { clearCart(); navigate("/shop"); }}
                   className="text-[11px] tracking-luxury uppercase text-muted-foreground hover:text-gold"
                 >
                   Continue Shopping

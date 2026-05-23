@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { motion } from "framer-motion";
 import { ArrowUpRight } from "lucide-react";
 import { PageHeader, PageShell } from "@/components/site/PageShell";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import suits from "@/assets/collection-suits.jpg";
 import shirts from "@/assets/collection-shirts.jpg";
 import oversized from "@/assets/collection-oversized.jpg";
@@ -35,24 +36,42 @@ const CATEGORIES = categories
   });
 
 function CategoryPage() {
-  const pathname = useLocation({ select: (state) => state.location.pathname });
+  const location = useLocation();
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const isCategoryRoot = location.pathname === "/category" || location.pathname === "/collection";
+  const rootPath = location.pathname.startsWith("/collection") ? "/collection" : "/category";
+  const images = CATEGORIES.map((cat) => cat.image);
 
-  if (pathname !== "/category") return <Outlet />;
+  if (!isCategoryRoot) return <Outlet />;
 
   return (
     <>
       <PageHeader
         eyebrow="The Maison"
-        title="Categories"
+        title="Collections"
         subtitle="Each universe, a chapter in the House of Valerion. Explore the silhouettes that define the modern gentleman."
       />
       <PageShell className="pt-0">
         <div className="mx-auto max-w-[1500px] px-6 lg:px-12 mt-20">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8 lg:auto-rows-[420px]">
             {CATEGORIES.map((cat, i) => (
-              <CategoryCard key={cat.id} cat={cat} index={i} />
+              <CategoryCard
+                key={cat.id}
+                cat={cat}
+                index={i}
+                rootPath={rootPath}
+                onImageClick={() => setSelectedIndex(i)}
+              />
             ))}
           </div>
+
+          <ImageLightbox
+            images={images}
+            selectedIndex={selectedIndex}
+            onClose={() => setSelectedIndex(null)}
+            onNext={() => selectedIndex !== null && setSelectedIndex((current) => (current === null ? null : (current + 1) % images.length))}
+            onPrev={() => selectedIndex !== null && setSelectedIndex((current) => (current === null ? null : (current - 1 + images.length) % images.length))}
+          />
 
           <div className="mt-24 text-center">
             <p className="text-[10px] tracking-wider-luxury uppercase text-gold mb-4">— Couture Atelier —</p>
@@ -73,24 +92,27 @@ function CategoryPage() {
 function CategoryCard({
   cat,
   index,
+  rootPath,
+  onImageClick,
 }: {
   cat: { id: string; title: string; count: number; image: string; span: string };
   index: number;
+  rootPath: string;
+  onImageClick: () => void;
 }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 40 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-80px" }}
-      transition={{ duration: 0.9, delay: index * 0.07, ease: [0.22, 1, 0.36, 1] }}
-      className={`group relative overflow-hidden bg-midnight ${cat.span}`}
-    >
-      <Link to={`/category/${cat.id}`} className="block h-full w-full">
+    <div className={`group relative overflow-hidden bg-background border border-border shadow-card ${cat.span}`}>
+      <Link to={`${rootPath}/${cat.id}`} className="block h-full w-full">
         <div className="absolute inset-0 hover-zoom-parent">
           <img
             src={cat.image}
             alt={cat.title}
             loading="lazy"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onImageClick();
+            }}
             className="h-full w-full object-cover hover-zoom-img opacity-90 group-hover:opacity-100 transition-opacity duration-700"
           />
         </div>
@@ -125,7 +147,7 @@ function CategoryCard({
           </p>
         </div>
       </Link>
-    </motion.div>
+    </div>
   );
 }
 

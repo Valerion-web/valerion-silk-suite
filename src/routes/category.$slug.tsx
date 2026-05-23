@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ChevronRight, Sparkles } from "lucide-react";
 import { categories, getCategoryBySlug, getProductsByCategorySlug, slugifyCategory } from "@/lib/products";
@@ -47,9 +47,23 @@ const resolveCategory = (slug: string) => getCategoryBySlug(LEGACY_SLUGS[slug] ?
 
 
 function CategorySlugPage() {
+  const location = useLocation();
+  const rootPath = location.pathname.startsWith("/collection") ? "/collection" : "/category";
   const { slug } = useParams();
-  const category = resolveCategory(slug);
-  if (!category) return <div>Not found</div>;
+  const category = resolveCategory(slug ?? "");
+  if (!category)
+    return (
+      <PageShell>
+        <div className="mx-auto max-w-3xl px-6 py-24 text-center">
+          <p className="text-[11px] tracking-[0.35em] uppercase text-gold">Category not found</p>
+          <h2 className="mt-6 font-display text-4xl text-foreground">This collection is unavailable.</h2>
+          <p className="mt-4 text-muted-foreground">Please choose another collection from our edit or return to the shop.</p>
+          <Link to="/shop" className="mt-8 inline-flex items-center justify-center rounded-none bg-gold px-8 py-3 text-[11px] uppercase tracking-luxury text-midnight hover:bg-frost transition-colors">
+            Browse the collection
+          </Link>
+        </div>
+      </PageShell>
+    );
 
   const resolvedSlug = slugifyCategory(category);
   const items = getProductsByCategorySlug(resolvedSlug);
@@ -76,7 +90,7 @@ function CategorySlugPage() {
           <nav className="mb-12 flex items-center gap-2 text-[10px] tracking-luxury uppercase text-muted-foreground">
             <Link to="/" className="hover:text-gold">Home</Link>
             <ChevronRight className="h-3 w-3" />
-            <Link to="/category" className="hover:text-gold">Categories</Link>
+            <Link to={rootPath} className="hover:text-gold">Categories</Link>
             <ChevronRight className="h-3 w-3" />
             <span className="text-foreground">{category}</span>
           </nav>
@@ -119,7 +133,7 @@ function CategorySlugPage() {
                 <p className="text-[10px] tracking-wider-luxury uppercase text-gold">— Continue Exploring —</p>
                 <h2 className="font-display text-3xl md:text-5xl mt-4">Other Houses</h2>
               </div>
-              <Link to="/category" className="hidden md:inline-block text-[11px] tracking-luxury uppercase link-underline">
+              <Link to={rootPath} className="hidden md:inline-block text-[11px] tracking-luxury uppercase link-underline">
                 All Categories
               </Link>
             </div>
@@ -132,7 +146,7 @@ function CategorySlugPage() {
                   viewport={{ once: true, margin: "-50px" }}
                   transition={{ duration: 0.6, delay: i * 0.06 }}
                 >
-                  <Link to={`/category/${c.id}`} className="group block relative overflow-hidden aspect-[3/4] bg-midnight">
+                  <Link to={`${rootPath}/${c.id}`} className="group block relative overflow-hidden aspect-[3/4] bg-background border border-border shadow-card">
                     <img src={c.image} alt={c.title} className="absolute inset-0 h-full w-full object-cover opacity-85 group-hover:opacity-100 group-hover:scale-105 transition-all duration-700" />
                     <div className="absolute inset-0 bg-gradient-to-t from-midnight via-midnight/40 to-transparent" />
                     <div className="absolute bottom-6 left-6 right-6 text-frost">

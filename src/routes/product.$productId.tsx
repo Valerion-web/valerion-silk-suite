@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -25,8 +25,20 @@ import { toast } from "sonner";
 
 function ProductPage() {
   const { productId } = useParams();
-  const product = findProduct(productId);
-  if (!product) return <div>Not found</div>;
+  const product = findProduct(productId ?? "");
+  if (!product)
+    return (
+      <PageShell>
+        <div className="mx-auto max-w-3xl px-6 py-24 text-center">
+          <p className="text-[11px] tracking-[0.35em] uppercase text-gold">Product not found</p>
+          <h2 className="mt-6 font-display text-4xl text-foreground">This product is unavailable.</h2>
+          <p className="mt-4 text-muted-foreground">Please return to the shop and select another piece from the collection.</p>
+          <Link to="/shop" className="mt-8 inline-flex items-center justify-center rounded-none bg-gold px-8 py-3 text-[11px] uppercase tracking-luxury text-midnight hover:bg-frost transition-colors">
+            Browse the collection
+          </Link>
+        </div>
+      </PageShell>
+    );
 
   const gallery = [
     product.image,
@@ -35,6 +47,7 @@ function ProductPage() {
     product.altImage ?? product.image,
   ];
   const [activeImg, setActiveImg] = useState(0);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const [size, setSize] = useState<string | null>(null);
   const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
   const [color, setColor] = useState(product.colors[0]);
@@ -46,6 +59,9 @@ function ProductPage() {
     .filter((p) => p.id !== product.id && p.category === product.category)
     .concat(products.filter((p) => p.id !== product.id && p.category !== product.category))
     .slice(0, 4);
+
+  const handlePrevImage = () => setActiveImg((current) => (current - 1 + gallery.length) % gallery.length);
+  const handleNextImage = () => setActiveImg((current) => (current + 1) % gallery.length);
 
   const handleMouseMove = (e: React.MouseEvent) => {
     const rect = imgRef.current?.getBoundingClientRect();
@@ -89,6 +105,7 @@ function ProductPage() {
 
             <div
               ref={imgRef}
+              onClick={() => setLightboxOpen(true)}
               onMouseMove={handleMouseMove}
               onMouseLeave={() => setZoomPos(null)}
               className="relative aspect-[3/4] overflow-hidden bg-muted cursor-zoom-in"
@@ -134,6 +151,53 @@ function ProductPage() {
                 ))}
               </div>
             </div>
+
+            <AnimatePresence>
+              {lightboxOpen && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setLightboxOpen(false)}
+                  className="fixed inset-0 z-50 grid place-items-center bg-black/90 p-6"
+                >
+                  <button
+                    onClick={() => setLightboxOpen(false)}
+                    className="absolute top-6 right-6 z-10 rounded-sm border border-white/20 bg-black/70 px-4 py-2 text-[11px] uppercase tracking-wider-luxury text-frost hover:bg-white/10"
+                    aria-label="Close image preview"
+                  >
+                    Close
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handlePrevImage(); }}
+                    className="absolute left-6 top-1/2 z-10 -translate-y-1/2 rounded-full border border-white/20 bg-black/70 p-3 text-frost hover:bg-white/10"
+                    aria-label="Previous image"
+                  >
+                    ‹
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleNextImage(); }}
+                    className="absolute right-6 top-1/2 z-10 -translate-y-1/2 rounded-full border border-white/20 bg-black/70 p-3 text-frost hover:bg-white/10"
+                    aria-label="Next image"
+                  >
+                    ›
+                  </button>
+                  <motion.div
+                    initial={{ scale: 0.96, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.96, opacity: 0 }}
+                    className="relative max-w-[90vw] max-h-[90vh] overflow-hidden rounded-md border border-white/10 bg-black"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <img
+                      src={gallery[activeImg]}
+                      alt={product.name}
+                      className="h-[80vh] w-full object-contain"
+                    />
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* Sticky details */}

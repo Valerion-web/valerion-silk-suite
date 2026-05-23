@@ -35,7 +35,7 @@ function CartPage() {
               <div className="space-y-6">
                 {lines.map((l) => (
                   <div key={`${l.id}-${l.size}-${l.color}`} className="glass-light flex gap-6 p-5">
-                    <Link to="/product/$productId" params={{ productId: l.id }} className="w-32 aspect-[3/4] shrink-0 overflow-hidden bg-muted">
+                    <Link to={`/product/${l.id}`} className="w-32 aspect-[3/4] shrink-0 overflow-hidden bg-muted">
                       <img src={l.product.image} alt={l.product.name} className="h-full w-full object-cover" />
                     </Link>
                     <div className="flex-1 min-w-0">
@@ -80,7 +80,7 @@ function CartPage() {
                 </div>
 
                 <button
-                  onClick={() => navigate({ to: "/checkout" })}
+                  onClick={() => navigate("/checkout")}
                   className="mt-8 w-full bg-midnight text-frost py-4 text-[11px] tracking-luxury uppercase inline-flex items-center justify-center gap-2 hover:bg-gold hover:text-midnight transition-colors duration-500"
                 >
                   Proceed to Checkout <ArrowRight className="h-4 w-4" />

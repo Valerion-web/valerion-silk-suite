@@ -43,7 +43,7 @@ function ContactPage() {
               <motion.button
                 whileHover={{ y: -2 }}
                 whileTap={{ scale: 0.98 }}
-                className="w-full bg-midnight text-frost py-4 text-[11px] tracking-luxury uppercase hover:bg-gold hover:text-midnight transition-colors duration-500"
+                className="w-full bg-gold text-midnight py-4 text-[11px] tracking-luxury uppercase hover:bg-frost transition-colors duration-500"
               >
                 Send Message
               </motion.button>
@@ -51,11 +51,11 @@ function ContactPage() {
           </div>
 
           <div className="space-y-6">
-            <div className="bg-gradient-navy text-frost p-8 md:p-12 relative overflow-hidden">
-              <div className="absolute inset-0 bg-radial-gold opacity-40" />
+            <div className="bg-background text-[#111827] p-8 md:p-12 relative overflow-hidden border border-border shadow-card">
+              <div className="absolute inset-0 bg-radial-gold opacity-10" />
               <div className="relative">
                 <h3 className="font-display text-2xl">Atelier Bangalore</h3>
-                <p className="mt-1 font-serif italic text-frost/70">By private appointment only</p>
+                <p className="mt-1 font-serif italic text-muted-foreground">By private appointment only</p>
 
                 <div className="mt-8 space-y-5 text-sm">
                   <Info Icon={MapPin} primary="Whitefield, Bangalore – 560066" secondary="Karnataka, India" />
