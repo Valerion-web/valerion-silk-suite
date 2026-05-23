@@ -62,34 +62,34 @@ export function SearchOverlay({ onClose }: { onClose: () => void }) {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.35 }}
-      className="fixed inset-0 z-[60] bg-[rgba(248,248,250,0.9)] flex items-start justify-center px-6 pt-[140px] pb-10 md:px-10"
+      className="fixed inset-0 z-[60] bg-[rgba(248,248,250,0.92)] flex items-start justify-center px-4 pt-[110px] pb-10 sm:px-6 md:px-10"
       onClick={onClose}
     >
       <motion.div
-        initial={{ y: 24, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 24, opacity: 0 }}
+        initial={{ y: 24, opacity: 0, scale: 0.98 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: 24, opacity: 0, scale: 0.98 }}
         transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-        className="pointer-events-auto w-full max-w-[1000px] overflow-hidden rounded-[34px] bg-white shadow-card"
+        className="pointer-events-auto w-[90%] max-w-md md:max-w-[1000px] mx-auto overflow-hidden rounded-[34px] bg-white shadow-card"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="relative border-b border-frost/15 px-6 py-5 md:px-8 md:py-7">
+        <div className="relative border-b border-frost/15 px-4 py-4 sm:px-5 sm:py-5 md:px-8 md:py-7">
           <button
             onClick={onClose}
-            className="absolute right-6 top-6 text-frost/80 hover:text-gold transition-colors"
+            className="absolute right-4 top-4 text-frost/80 hover:text-gold transition-colors"
             aria-label="Close search"
           >
             <X className="h-5 w-5" />
           </button>
           <p className="text-sm uppercase tracking-[0.45em] text-gold/80 mb-4">Search the House</p>
-          <div className="flex items-center gap-4 rounded-[24px] border border-[rgba(212,175,55,0.3)] bg-[#07112e] px-5 py-4 md:px-6 md:py-5 shadow-glow transition-all duration-300">
+          <div className="search-overlay-panel flex items-center gap-4 rounded-[24px] border border-[rgba(212,175,55,0.3)] bg-[#07112e] px-4 py-4 shadow-glow transition-all duration-300">
             <Search className="h-5 w-5 text-[#d4af37]" />
             <input
               ref={inputRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search for suits, shirts, knitwear…"
-              className="flex-1 bg-transparent text-[#d4af37] text-2xl md:text-3xl font-display placeholder:text-[#d4af37]/70 outline-none transition-all duration-300 focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+              className="search-overlay-input flex-1 w-full h-14 sm:h-16 px-5 text-lg sm:text-2xl truncate overflow-hidden whitespace-nowrap text-[#d4af37] font-display bg-transparent placeholder:text-sm sm:placeholder:text-xl placeholder:text-[#d4af37]/70 outline-none transition-all duration-300 focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
               autoFocus
             />
           </div>

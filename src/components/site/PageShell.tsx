@@ -17,7 +17,7 @@ export function PageHeader({ eyebrow, title, subtitle }: { eyebrow?: string; tit
   return (
     <section className="relative overflow-hidden bg-gradient-navy text-frost">
       <div className="absolute inset-0 bg-radial-gold opacity-60" />
-      <div className="film-grain relative mx-auto max-w-[1500px] px-6 lg:px-12 py-24 md:py-32 text-center">
+      <div className="film-grain relative mx-auto max-w-[1500px] px-4 sm:px-6 md:px-10 lg:px-12 py-16 md:py-24 text-center">
         {eyebrow && <p className="text-[10px] tracking-wider-luxury uppercase text-gold mb-6">— {eyebrow} —</p>}
         <h1 className="font-display text-5xl md:text-7xl leading-[1.05]">{title}</h1>
         {subtitle && <p className="mt-6 font-serif italic text-lg md:text-xl text-frost/70 max-w-2xl mx-auto">{subtitle}</p>}

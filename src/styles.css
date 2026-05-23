@@ -147,6 +147,29 @@
     text-rendering: optimizeLegibility;
   }
 
+  img {
+    display: block;
+    max-width: 100%;
+  }
+
+  .search-overlay-input {
+    min-width: 0;
+  }
+
+  @media (max-width: 400px) {
+    .search-overlay-input {
+      font-size: 1rem;
+      padding-left: 0.75rem;
+      padding-right: 0.75rem;
+      height: 3rem;
+    }
+
+    .search-overlay-panel {
+      padding-left: 0.75rem;
+      padding-right: 0.75rem;
+    }
+  }
+
   h1,
   h2,
   h3,

@@ -52,8 +52,8 @@ function CategoryPage() {
         subtitle="Each universe, a chapter in the House of Valerion. Explore the silhouettes that define the modern gentleman."
       />
       <PageShell className="pt-0">
-        <div className="mx-auto max-w-[1500px] px-6 lg:px-12 mt-20">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8 lg:auto-rows-[420px]">
+        <div className="w-full max-w-7xl mx-auto overflow-x-hidden px-4 sm:px-6 md:px-10 lg:px-12 mt-8 sm:mt-10 md:mt-12">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 md:gap-6">
             {CATEGORIES.map((cat, i) => (
               <CategoryCard
                 key={cat.id}
@@ -73,7 +73,7 @@ function CategoryPage() {
             onPrev={() => selectedIndex !== null && setSelectedIndex((current) => (current === null ? null : (current - 1 + images.length) % images.length))}
           />
 
-          <div className="mt-24 text-center">
+          <div className="mt-16 md:mt-24 text-center">
             <p className="text-[10px] tracking-wider-luxury uppercase text-gold mb-4">— Couture Atelier —</p>
             <h2 className="font-display text-3xl md:text-4xl mb-4">Bespoke, on appointment.</h2>
             <p className="font-serif italic text-muted-foreground max-w-xl mx-auto mb-8">
@@ -101,50 +101,46 @@ function CategoryCard({
   onImageClick: () => void;
 }) {
   return (
-    <div className={`group relative overflow-hidden bg-background border border-border shadow-card ${cat.span}`}>
+    <div className={`group relative overflow-hidden bg-background border border-border shadow-card ${cat.span} min-h-[320px] sm:min-h-[420px] md:min-h-[520px]`}>
       <Link to={`${rootPath}/${cat.id}`} className="block h-full w-full">
-        <div className="absolute inset-0 hover-zoom-parent">
+        <div className="relative w-full h-[320px] sm:h-[420px] md:h-[520px] overflow-hidden bg-gray-100">
           <img
             src={cat.image}
             alt={cat.title}
-            loading="lazy"
+            loading="eager"
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
               onImageClick();
             }}
-            className="h-full w-full object-cover hover-zoom-img opacity-90 group-hover:opacity-100 transition-opacity duration-700"
+            className="w-full h-full object-cover"
           />
-        </div>
 
-        {/* Cinematic gradient overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-midnight via-midnight/50 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-br from-midnight/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+          {/* Cinematic gradient overlay */}
+          <div className="absolute inset-0 bg-gradient-to-t from-midnight via-midnight/50 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-br from-midnight/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+          <div className="pointer-events-none absolute inset-4 border border-gold/0 group-hover:border-gold/40 transition-all duration-700" />
 
-        {/* Gold hairline frame on hover */}
-        <div className="pointer-events-none absolute inset-4 border border-gold/0 group-hover:border-gold/40 transition-all duration-700" />
+          <div className="absolute top-6 left-6 text-[10px] tracking-wider-luxury text-gold/80">
+            0{index + 1}
+          </div>
 
-        {/* Number */}
-        <div className="absolute top-6 left-6 text-[10px] tracking-wider-luxury text-gold/80">
-          0{index + 1}
-        </div>
+          <div className="absolute top-6 right-6 h-9 w-9 grid place-items-center rounded-full border border-frost/20 text-frost/70 group-hover:border-gold group-hover:text-gold group-hover:rotate-45 transition-all duration-500">
+            <ArrowUpRight className="h-4 w-4" />
+          </div>
 
-        <div className="absolute top-6 right-6 h-9 w-9 grid place-items-center rounded-full border border-frost/20 text-frost/70 group-hover:border-gold group-hover:text-gold group-hover:rotate-45 transition-all duration-500">
-          <ArrowUpRight className="h-4 w-4" />
-        </div>
-
-        {/* Bottom content */}
-        <div className="absolute bottom-0 inset-x-0 p-7 md:p-9 text-frost">
-          <p className="text-[10px] tracking-wider-luxury uppercase text-gold/90 mb-3">
-            {cat.count} {cat.count === 1 ? "piece" : "pieces"}
-          </p>
-          <h3 className="font-display text-2xl md:text-3xl leading-tight transition-transform duration-700 group-hover:translate-x-1">
-            {cat.title}
-          </h3>
-          <div className="mt-4 h-px w-12 bg-gradient-to-r from-gold to-transparent transition-all duration-700 group-hover:w-24" />
-          <p className="mt-4 text-[11px] tracking-luxury uppercase text-frost/60 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-500">
-            Discover the Edit →
-          </p>
+          <div className="absolute bottom-0 inset-x-0 p-4 sm:p-5 md:p-6 text-frost">
+            <p className="text-[10px] tracking-wider-luxury uppercase text-gold/90 mb-3">
+              {cat.count} {cat.count === 1 ? "piece" : "pieces"}
+            </p>
+            <h3 className="font-display text-2xl md:text-3xl leading-tight transition-transform duration-700 group-hover:translate-x-1">
+              {cat.title}
+            </h3>
+            <div className="mt-4 h-px w-12 bg-gradient-to-r from-gold to-transparent transition-all duration-700 group-hover:w-24" />
+            <p className="mt-4 text-[11px] tracking-luxury uppercase text-frost/60 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-500">
+              Discover the Edit →
+            </p>
+          </div>
         </div>
       </Link>
     </div>

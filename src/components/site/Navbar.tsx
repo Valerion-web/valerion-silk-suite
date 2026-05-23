@@ -34,6 +34,11 @@ export function Navbar() {
   const { cartCount, wishCount } = useShop();
 
   useEffect(() => {
+    setSearchOpen(false);
+    setMenuOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
     const handleScroll = () => {
       setScrolled(window.scrollY > 40);
     };
@@ -109,7 +114,10 @@ export function Navbar() {
 
             <div className="nav-icons">
               <button
-                onClick={() => setSearchOpen(true)}
+                onClick={() => {
+                  setSearchOpen(true);
+                  setMenuOpen(false);
+                }}
                 aria-label="Search"
                 className="hover:text-gold hover:drop-shadow-[0_0_8px_rgba(212,175,55,0.6)] transition-all"
               >
@@ -143,7 +151,10 @@ export function Navbar() {
                 )}
               </Link>
               <button
-                onClick={() => setMenuOpen(true)}
+                onClick={() => {
+                  setMenuOpen(true);
+                  setSearchOpen(false);
+                }}
                 className="lg:hidden hover:text-gold transition-colors"
                 aria-label="Open menu"
               >
