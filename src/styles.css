@@ -398,9 +398,8 @@
     left: 0;
     width: 100%;
 
-    height: 110px;
-    padding-top: 8px;
-    padding-bottom: 8px;
+    height: 72px;
+    padding: 0;
 
     z-index: 9999;
 
@@ -417,13 +416,14 @@
   }
 
   .navbar-inner {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    display: flex;
     align-items: center;
+    justify-content: space-between;
     width: 100%;
-    height: 110px;
-    padding: 0 42px;
+    height: 72px;
+    padding: 0 16px;
     max-width: none;
+    gap: 1rem;
   }
 
   .nav-left,
@@ -434,7 +434,7 @@
   .nav-left {
     display: flex;
     align-items: center;
-    gap: 34px;
+    gap: 0.75rem;
   }
 
   .nav-center {
@@ -447,14 +447,14 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 28px;
+    gap: 0.75rem;
     color: var(--frost);
   }
 
   .nav-links {
     display: none;
     align-items: center;
-    gap: 34px;
+    gap: 0.75rem;
   }
 
   .nav-divider {
@@ -467,18 +467,51 @@
   .nav-icons {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 0.5rem;
   }
 
   .navbar a {
     color: rgba(255, 255, 255, 0.92);
-    letter-spacing: 3px;
-    font-size: 12px;
+    letter-spacing: 0.25em;
+    font-size: 11px;
+    white-space: nowrap;
     transition: color 0.3s ease;
   }
 
   .navbar a:hover {
     color: #D4AF37;
+  }
+
+  @media (min-width: 640px) {
+    .navbar {
+      height: 88px;
+    }
+
+    .navbar-inner {
+      height: 88px;
+      padding: 0 24px;
+    }
+
+    .nav-left {
+      gap: 1rem;
+    }
+
+    .nav-right {
+      gap: 1rem;
+    }
+
+    .nav-icons {
+      gap: 1rem;
+    }
+
+    .navbar a {
+      font-size: 11px;
+      letter-spacing: 0.25em;
+    }
+
+    .brand-icon {
+      width: 80px;
+    }
   }
 
   @media (min-width: 1024px) {
@@ -489,36 +522,58 @@
     .nav-divider {
       display: block;
     }
-  }
-
-  @media (max-width: 768px) {
-    .navbar {
-      height: 88px;
-    }
 
     .navbar-inner {
-      height: 88px;
-      padding: 0 20px;
-      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      padding: 0 42px;
     }
 
     .nav-left {
-      gap: 18px;
+      gap: 2.125rem;
     }
 
     .nav-right {
-      gap: 14px;
+      gap: 1.75rem;
     }
 
     .nav-icons {
-      gap: 14px;
+      gap: 1.25rem;
+    }
+
+    .navbar a {
+      font-size: 12px;
+      letter-spacing: 3px;
+    }
+  }
+
+  @media (max-width: 400px) {
+    .navbar-inner {
+      padding: 0 12px;
+      gap: 0.5rem;
+    }
+
+    .nav-left {
+      gap: 0.5rem;
+    }
+
+    .nav-right {
+      gap: 0.5rem;
+    }
+
+    .nav-icons {
+      gap: 0.5rem;
     }
 
     .navbar a {
       font-size: 10px;
-      letter-spacing: 2px;
+      letter-spacing: 0.2em;
     }
 
+    .brand-icon {
+      width: 56px;
+    }
+  }
+
+  @media (max-width: 768px) {
     .hero-section {
       min-height: calc(100vh - 68px);
       margin-top: 68px;
@@ -540,12 +595,6 @@
       letter-spacing: 2px;
       max-width: 100%;
       width: 100%;
-    }
-
-    .brand-icon {
-      width: 72px;
-      height: auto;
-      max-width: 100%;
     }
   }
 
