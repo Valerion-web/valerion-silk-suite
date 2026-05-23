@@ -6,7 +6,7 @@ export function PageShell({ children, className = "" }: { children: React.ReactN
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.6 }}
-      className={`pt-28 pb-24 bg-[#f8f8fa] text-[#111827] ${className}`}
+      className={`w-full max-w-full mx-auto overflow-x-hidden pt-28 pb-24 bg-[#f8f8fa] text-[#111827] px-4 sm:px-6 md:px-8 lg:px-12 ${className}`}
     >
       {children}
     </motion.main>

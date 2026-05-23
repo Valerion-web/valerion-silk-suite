@@ -192,7 +192,7 @@ function ProductPage() {
                     <img
                       src={gallery[activeImg]}
                       alt={product.name}
-                      className="h-[80vh] w-full object-contain"
+                      className="max-h-[90vh] w-full h-auto object-contain"
                     />
                   </motion.div>
                 </motion.div>

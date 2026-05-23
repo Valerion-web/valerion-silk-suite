@@ -9,7 +9,7 @@ export function MobileMenu({ onClose, links }: { onClose: () => void; links: { t
       animate={{ x: 0 }}
       exit={{ x: "-100%" }}
       transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-      className="fixed inset-0 z-[60] bg-midnight text-frost flex flex-col p-8"
+      className="fixed inset-0 z-[60] bg-midnight text-frost flex min-h-full flex-col overflow-x-hidden p-6 sm:p-8"
     >
       <div className="flex justify-between items-center">
         <span className="font-display tracking-[0.14em]">VALERION</span>
@@ -23,7 +23,7 @@ export function MobileMenu({ onClose, links }: { onClose: () => void; links: { t
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.2 + i * 0.08 }}
           >
-            <Link to={l.to} onClick={onClose} className="font-display text-4xl hover:text-gold transition-colors">
+            <Link to={l.to} onClick={onClose} className="font-display text-3xl sm:text-4xl hover:text-gold transition-colors">
               {l.label}
             </Link>
           </motion.div>

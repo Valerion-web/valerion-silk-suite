@@ -29,7 +29,7 @@ function Index() {
 
 function FeaturedCollections() {
   return (
-    <section className="py-24 md:py-32 mx-auto max-w-[1500px] px-6 lg:px-12">
+    <section className="py-24 md:py-32 mx-auto max-w-[1500px] px-4 sm:px-6 md:px-8 lg:px-12">
       <SectionHeading eyebrow="The Collections" title="Crafted in Six Chapters" subtitle="Each silhouette is a study in restraint, designed for men who write their own legacy." />
 
       <div className="mt-16 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -62,7 +62,7 @@ function FeaturedCollections() {
 function NewArrivals() {
   return (
     <section className="py-24 md:py-32 bg-secondary/30">
-      <div className="mx-auto max-w-[1500px] px-6 lg:px-12">
+      <div className="mx-auto max-w-[1500px] px-4 sm:px-6 md:px-8 lg:px-12">
         <div className="flex items-end justify-between gap-8 flex-wrap">
           <SectionHeading align="left" eyebrow="New Arrivals" title="The Season's Edit" />
           <Link to="/shop" className="text-[11px] tracking-luxury uppercase link-underline text-gold">View All</Link>
@@ -79,7 +79,7 @@ function NewArrivals() {
 
 function BrandStory() {
   return (
-    <section className="py-24 md:py-32 mx-auto max-w-[1500px] px-6 lg:px-12">
+    <section className="py-24 md:py-32 mx-auto max-w-[1500px] px-4 sm:px-6 md:px-8 lg:px-12">
       <div className="grid lg:grid-cols-2 gap-14 lg:gap-24 items-center">
         <motion.div
           initial={{ opacity: 0, x: -30 }}
@@ -122,13 +122,13 @@ function ExperienceBanner() {
   const y = useTransform(scrollYProgress, [0, 1], ["-15%", "15%"]);
 
   return (
-    <section ref={ref} className="relative h-[80vh] min-h-[600px] overflow-hidden bg-midnight">
+    <section ref={ref} className="relative min-h-[60vh] md:min-h-[80vh] overflow-hidden bg-midnight">
       <motion.div style={{ y }} className="absolute inset-0">
         <img src={experienceImg} alt="Luxury experience" loading="lazy" className="h-full w-full object-cover" />
       </motion.div>
       <div className="absolute inset-0 bg-gradient-to-r from-midnight via-midnight/60 to-transparent" />
       <div className="film-grain absolute inset-0" />
-      <div className="relative h-full flex items-center mx-auto max-w-[1500px] px-6 lg:px-12">
+      <div className="relative h-full flex items-center mx-auto w-full max-w-[1500px] px-4 sm:px-6 md:px-8 lg:px-12">
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -163,7 +163,7 @@ function Testimonials() {
     <section className="py-24 md:py-32 bg-gradient-navy text-frost relative overflow-hidden">
       <div className="absolute inset-0 bg-radial-gold opacity-50" />
       <div className="film-grain absolute inset-0" />
-      <div className="relative mx-auto max-w-[1500px] px-6 lg:px-12">
+      <div className="relative mx-auto max-w-[1500px] px-4 sm:px-6 md:px-8 lg:px-12">
         <SectionHeading light eyebrow="Words from the House" title="Spoken by Gentlemen" />
         <div className="mt-16 grid gap-6 md:grid-cols-3">
           {testimonials.map((t, i) => (
@@ -194,9 +194,9 @@ function Testimonials() {
 function Gallery() {
   const imgs = [collections[0].image, collections[2].image, collections[3].image, collections[5].image, collections[1].image, collections[4].image];
   return (
-    <section className="py-24 md:py-32 mx-auto max-w-[1500px] px-6 lg:px-12">
+    <section className="py-24 md:py-32 mx-auto max-w-[1500px] px-4 sm:px-6 md:px-8 lg:px-12">
       <SectionHeading eyebrow="@HouseOfValerion" title="Editorial Diary" subtitle="Moments from the atelier and the men who wear it." />
-      <div className="mt-14 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="mt-14 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {imgs.map((src, i) => (
           <motion.a
             key={i}

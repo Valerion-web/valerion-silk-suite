@@ -3,7 +3,7 @@ import heroImg from "@/assets/hero.jpg";
 
 export function CinematicHero() {
   return (
-    <section className="hero-section">
+    <section className="hero-section min-h-screen w-full overflow-hidden">
       <img
         src={heroImg}
         alt="House of Valerion luxury fashion campaign"

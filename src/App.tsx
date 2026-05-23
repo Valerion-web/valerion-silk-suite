@@ -30,9 +30,9 @@ function App() {
         <ShopProvider>
           <BrowserRouter>
             <ScrollToTop />
-            <div className="min-h-screen flex flex-col bg-background">
+            <div className="min-h-screen flex flex-col bg-background overflow-x-hidden">
               <Navbar />
-              <div className="flex-1">
+              <div className="flex-1 w-full">
                 <Routes>
                   <Route path="/" element={<Index />} />
                   <Route path="/about" element={<About />} />

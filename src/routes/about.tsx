@@ -82,7 +82,7 @@ function AboutPage() {
           </div>
         </section>
 
-        <section className="mt-32 relative h-[60vh] min-h-[500px] overflow-hidden rounded-[32px] border border-border">
+        <section className="mt-32 relative min-h-[50vh] sm:min-h-[60vh] overflow-hidden rounded-[32px] border border-border">
           <img src={experienceImg} alt="" className="absolute inset-0 h-full w-full object-cover" />
           <div className="absolute inset-0 bg-white/30" />
           <div className="film-grain absolute inset-0" />
