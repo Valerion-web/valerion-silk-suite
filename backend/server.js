@@ -6,6 +6,7 @@ import { connectDB } from './config/db.js'
 import { Prisma } from '@prisma/client'
 import prisma, { pool } from './lib/prisma.js'
 import productRoutes from './routes/productRoutes.js'
+import authRoutes from './routes/authRoutes.js'
 import { notFound, errorHandler } from './middleware/errorMiddleware.js'
 
 connectDB()
@@ -17,6 +18,7 @@ app.use(express.json())
 app.use(morgan('dev'))
 app.use('/uploads', express.static('uploads'))
 app.use('/api/products', productRoutes)
+app.use('/api/auth', authRoutes)
 
 app.post('/api/products/test-create', async (req, res, next) => {
   try {
@@ -74,5 +76,9 @@ app.listen(PORT, () => {
   console.log(`   - GET  http://localhost:${PORT}/api/db-check`)
   console.log(`   - GET  http://localhost:${PORT}/api/products`)
   console.log(`   - GET  http://localhost:${PORT}/api/products/:id`)
-  console.log(`   - POST http://localhost:${PORT}/api/products\n`)
+  console.log(`   - POST http://localhost:${PORT}/api/products`)
+  console.log(`   - POST http://localhost:${PORT}/api/auth/register`)
+  console.log(`   - POST http://localhost:${PORT}/api/auth/login`)
+  console.log(`   - POST http://localhost:${PORT}/api/auth/logout`)
+  console.log(`   - GET  http://localhost:${PORT}/api/auth/profile\n`)
 })
