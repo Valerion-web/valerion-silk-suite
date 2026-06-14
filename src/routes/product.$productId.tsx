@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router-dom";
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Heart,
@@ -15,50 +15,101 @@ import {
   Sparkles,
 } from "lucide-react";
 import { findProduct, products } from "@/lib/products";
+import { getProductImage } from "@/lib/image-utils";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PageShell } from "@/components/site/PageShell";
 import { SizeGuide } from "@/components/site/SizeGuide";
 import { useShop } from "@/lib/store";
 import { toast } from "sonner";
 
+// Type definitions
+interface ApiProduct {
+  id: number;
+  name: string;
+  slug: string;
+  description: string;
+  brand?: string;
+  price: string | number;
+  countInStock: number;
+  images: string[];
+  category?: { name: string } | string;
+  colors?: string[];
+  sizes?: string[];
+  fabric?: string;
+  badge?: string;
+}
+
 
 
 function ProductPage() {
   const { productId } = useParams();
   const product = findProduct(productId ?? "");
-  if (!product)
-    return (
-      <PageShell>
-        <div className="mx-auto max-w-3xl px-6 py-24 text-center">
-          <p className="text-[11px] tracking-[0.35em] uppercase text-gold">Product not found</p>
-          <h2 className="mt-6 font-display text-4xl text-foreground">This product is unavailable.</h2>
-          <p className="mt-4 text-muted-foreground">Please return to the shop and select another piece from the collection.</p>
-          <Link to="/shop" className="mt-8 inline-flex items-center justify-center rounded-none bg-gold px-8 py-3 text-[11px] uppercase tracking-luxury text-midnight hover:bg-frost transition-colors">
-            Browse the collection
-          </Link>
-        </div>
-      </PageShell>
-    );
 
-  const gallery = [
-    product.image,
-    product.altImage ?? product.image,
-    product.image,
-    product.altImage ?? product.image,
-  ];
+  // Support fetching product from backend API when product isn't in the local static catalog
+  const [apiProduct, setApiProduct] = useState<ApiProduct | null>(null);
+  const [loadingApi, setLoadingApi] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!product && productId) {
+      const fetchProduct = async () => {
+        setLoadingApi(true);
+        setApiError(null);
+        try {
+          const res = await fetch(`/api/products/${productId}`);
+          if (!res.ok) throw new Error(`Failed to fetch product ${res.status}`);
+          const data: ApiProduct = await res.json();
+          setApiProduct(data);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          setApiError(message);
+        } finally {
+          setLoadingApi(false);
+        }
+      };
+      fetchProduct();
+    }
+  }, [product, productId]);
+
+  // Compose an effective product object that works for both local static products and API products
+  const effectiveProduct = product
+    ? product
+    : apiProduct
+    ? {
+        id: String(apiProduct.id),
+        name: apiProduct.name,
+        category: apiProduct.category?.name ?? (typeof apiProduct.category === 'string' ? apiProduct.category : ''),
+        price: typeof apiProduct.price === 'string' ? Number(apiProduct.price) : apiProduct.price,
+        image: getProductImage(apiProduct.images),
+        altImage: apiProduct.images && apiProduct.images.length > 1 ? apiProduct.images[1] : undefined,
+        colors: apiProduct.colors ?? ["#000"],
+        sizes: apiProduct.sizes ?? [],
+        fabric: apiProduct.fabric ?? '',
+        description: apiProduct.description ?? apiProduct.description ?? '',
+      }
+    : null;
+
+  // Initialize state variables (always called, never conditionally)
+  const gallery = effectiveProduct ? [
+    effectiveProduct.image,
+    effectiveProduct.altImage ?? effectiveProduct.image,
+    effectiveProduct.image,
+    effectiveProduct.altImage ?? effectiveProduct.image,
+  ] : [];
+
   const [activeImg, setActiveImg] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [size, setSize] = useState<string | null>(null);
   const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
-  const [color, setColor] = useState(product.colors[0]);
+  const [color, setColor] = useState(effectiveProduct?.colors[0] ?? "#000");
   const [qty, setQty] = useState(1);
   const [zoomPos, setZoomPos] = useState<{ x: number; y: number } | null>(null);
   const imgRef = useRef<HTMLDivElement>(null);
 
-  const related = products
-    .filter((p) => p.id !== product.id && p.category === product.category)
-    .concat(products.filter((p) => p.id !== product.id && p.category !== product.category))
-    .slice(0, 4);
+  const related = effectiveProduct ? products
+    .filter((p) => p.id !== effectiveProduct.id && p.category === effectiveProduct.category)
+    .concat(products.filter((p) => p.id !== effectiveProduct.id && p.category !== effectiveProduct.category))
+    .slice(0, 4) : [];
 
   const handlePrevImage = () => setActiveImg((current) => (current - 1 + gallery.length) % gallery.length);
   const handleNextImage = () => setActiveImg((current) => (current + 1) % gallery.length);
@@ -71,6 +122,31 @@ function ProductPage() {
     setZoomPos({ x, y });
   };
 
+  // Conditionally render based on state
+  if (loadingApi) {
+    return (
+      <PageShell>
+        <div className="mx-auto max-w-3xl px-6 py-24 text-center">
+          <p className="text-[11px] tracking-[0.35em] uppercase text-gold animate-pulse">Loading product…</p>
+        </div>
+      </PageShell>
+    );
+  }
+
+  if (!effectiveProduct) {
+    return (
+      <PageShell>
+        <div className="mx-auto max-w-3xl px-6 py-24 text-center">
+          <p className="text-[11px] tracking-[0.35em] uppercase text-gold">Product not found</p>
+          <h2 className="mt-6 font-display text-4xl text-foreground">This product is unavailable.</h2>
+          <Link to="/shop" className="mt-8 inline-flex items-center justify-center rounded-none bg-gold px-8 py-3 text-[11px] uppercase tracking-luxury text-midnight hover:bg-frost transition-colors">
+            Browse the collection
+          </Link>
+        </div>
+      </PageShell>
+    );
+  }
+
   return (
     <PageShell>
       <div className="mx-auto max-w-[1500px] px-6 lg:px-12">
@@ -80,7 +156,7 @@ function ProductPage() {
           <ChevronRight className="h-3 w-3" />
           <Link to="/shop" className="hover:text-gold transition-colors">Shop</Link>
           <ChevronRight className="h-3 w-3" />
-          <span className="text-foreground">{product.category}</span>
+              <span className="text-foreground">{effectiveProduct!.category}</span>
         </nav>
 
         <div className="grid lg:grid-cols-[1fr_460px] gap-12 lg:gap-20">
@@ -114,7 +190,7 @@ function ProductPage() {
                 <motion.img
                   key={activeImg}
                   src={gallery[activeImg]}
-                  alt={product.name}
+                  alt={effectiveProduct!.name}
                   initial={{ opacity: 0, scale: 1.04 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0 }}
@@ -132,9 +208,9 @@ function ProductPage() {
                 />
               </AnimatePresence>
 
-              {product.badge && (
+              {effectiveProduct!.badge && (
                 <span className="absolute top-5 left-5 bg-frost/95 text-midnight text-[9px] tracking-luxury uppercase px-3 py-1.5">
-                  {product.badge}
+                  {effectiveProduct!.badge}
                 </span>
               )}
 
@@ -191,7 +267,7 @@ function ProductPage() {
                   >
                     <img
                       src={gallery[activeImg]}
-                      alt={product.name}
+                      alt={effectiveProduct!.name}
                       className="max-h-[90vh] w-full h-auto object-contain"
                     />
                   </motion.div>
@@ -207,16 +283,16 @@ function ProductPage() {
             transition={{ duration: 0.7, delay: 0.1 }}
             className="lg:sticky lg:top-28 self-start"
           >
-            <p className="text-[10px] tracking-luxury uppercase text-gold">
-              {product.category}
+                    <p className="text-[10px] tracking-luxury uppercase text-gold">
+              {effectiveProduct!.category}
             </p>
             <h1 className="font-display text-4xl md:text-5xl mt-3 leading-[1.05]">
-              {product.name}
+              {effectiveProduct!.name}
             </h1>
 
             <div className="mt-5 flex items-center gap-5">
               <p className="font-serif text-3xl">
-                ${product.price.toLocaleString()}
+                ${effectiveProduct!.price.toLocaleString()}
               </p>
               <div className="flex items-center gap-1 text-gold">
                 {Array.from({ length: 5 }).map((_, k) => (
@@ -229,7 +305,7 @@ function ProductPage() {
             </div>
 
             <p className="mt-8 font-serif text-lg italic text-muted-foreground leading-relaxed">
-              {product.description}
+              {effectiveProduct!.description}
             </p>
 
             {/* Color */}
@@ -243,7 +319,7 @@ function ProductPage() {
                 </p>
               </div>
               <div className="flex gap-3">
-                {product.colors.map((c) => (
+                {effectiveProduct!.colors.map((c) => (
                   <motion.button
                     key={c}
                     onClick={() => setColor(c)}
@@ -272,7 +348,7 @@ function ProductPage() {
                 </button>
               </div>
               <div className="flex flex-wrap gap-2">
-                {product.sizes.map((s) => (
+                {effectiveProduct!.sizes.map((s) => (
                   <motion.button
                     key={s}
                     onClick={() => setSize(s)}
@@ -295,7 +371,9 @@ function ProductPage() {
             </div>
 
             {/* CTA */}
-            <ProductCTA product={product} size={size} color={color} qty={qty} setQty={setQty} />
+            {effectiveProduct && (
+              <ProductCTA product={effectiveProduct as NonNullable<ReturnType<typeof findProduct>>} size={size} color={color} qty={qty} setQty={setQty} />
+            )}
 
             {/* Scarcity */}
             <div className="mt-6 flex items-center gap-2 text-[10px] tracking-luxury uppercase text-muted-foreground">
@@ -326,7 +404,7 @@ function ProductPage() {
                 icon={<Scissors className="h-3 w-3" />}
                 defaultOpen
               >
-                {product.fabric}. Hand-finished in our Milano atelier. Each
+                {effectiveProduct!.fabric}. Hand-finished in our Milano atelier. Each
                 piece carries the stitched signature of its tailor and a unique
                 serial woven into the inner placket.
               </Detail>
@@ -365,7 +443,7 @@ function ProductPage() {
             </div>
             <div className="space-y-5 font-serif italic text-lg text-frost/80 leading-relaxed">
               <p>
-                Every stitch of the {product.name.toLowerCase()} is the
+                Every stitch of the {effectiveProduct!.name.toLowerCase()} is the
                 culmination of 47 individual operations performed by a single
                 master tailor in our Milano workshop.
               </p>

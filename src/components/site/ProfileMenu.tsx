@@ -168,13 +168,31 @@ function AuthModal({ open, onClose, mode, setMode }: { open: boolean; onClose: (
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (mode === "signin") signIn(email, pass);
-    else signUp(name || email.split("@")[0], email, pass);
-    setName(""); setEmail(""); setPass("");
-    onClose();
+    setLoading(true);
+    try {
+      // Trim whitespace and normalize email (lowercase)
+      const trimmedEmail = email.trim().toLowerCase();
+      const trimmedPass = pass.trim();
+      const trimmedName = name.trim();
+
+      if (mode === "signin") {
+        await signIn(trimmedEmail, trimmedPass);
+      } else {
+        await signUp(trimmedName || trimmedEmail.split("@")[0], trimmedEmail, trimmedPass);
+      }
+      setName("");
+      setEmail("");
+      setPass("");
+      onClose();
+    } catch (error) {
+      // error toast is handled inside auth provider
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -216,16 +234,17 @@ function AuthModal({ open, onClose, mode, setMode }: { open: boolean; onClose: (
 
               <form onSubmit={submit} className="space-y-4">
                 {mode === "signup" && (
-                  <Field icon={UserIcon} type="text" placeholder="Full Name" value={name} onChange={setName} />
+                  <Field icon={UserIcon} type="text" placeholder="Full Name" value={name} onChange={setName} required />
                 )}
                 <Field icon={Mail} type="email" placeholder="Email Address" value={email} onChange={setEmail} required />
                 <Field icon={Lock} type="password" placeholder="Password" value={pass} onChange={setPass} required />
 
                 <button
                   type="submit"
-                  className="w-full bg-gradient-gold text-midnight py-3 text-[11px] tracking-[0.24em] uppercase font-medium hover:shadow-[0_0_28px_rgba(212,175,55,0.55)] transition-all mt-2"
+                  disabled={loading}
+                  className="w-full bg-gradient-gold text-midnight py-3 text-[11px] tracking-[0.24em] uppercase font-medium hover:shadow-[0_0_28px_rgba(212,175,55,0.55)] transition-all mt-2 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {mode === "signin" ? "Sign In" : "Create Account"}
+                  {loading ? (mode === "signin" ? "Signing in..." : "Creating account...") : (mode === "signin" ? "Sign In" : "Create Account")}
                 </button>
               </form>
 

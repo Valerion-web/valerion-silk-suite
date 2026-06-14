@@ -24,7 +24,10 @@ export const registerUser = async (req, res, next) => {
   try {
     const { name, email, password } = req.body || {}
 
-    if (!email || typeof email !== 'string' || !email.includes('@')) {
+    // Normalize email to lowercase
+    const normalizedEmail = email ? email.trim().toLowerCase() : ''
+
+    if (!normalizedEmail || typeof normalizedEmail !== 'string' || !normalizedEmail.includes('@')) {
       res.status(400)
       throw new Error('A valid email is required')
     }
@@ -34,7 +37,7 @@ export const registerUser = async (req, res, next) => {
       throw new Error('Password must be at least 8 characters')
     }
 
-    const existing = await prisma.user.findUnique({ where: { email } })
+    const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } })
     if (existing) {
       res.status(409)
       throw new Error('Email is already registered')
@@ -44,7 +47,7 @@ export const registerUser = async (req, res, next) => {
     const user = await prisma.user.create({
       data: {
         name,
-        email,
+        email: normalizedEmail,
         password: hashedPassword,
       },
     })
@@ -60,12 +63,15 @@ export const loginUser = async (req, res, next) => {
   try {
     const { email, password } = req.body || {}
 
-    if (!email || !password) {
+    // Normalize email to lowercase
+    const normalizedEmail = email ? email.trim().toLowerCase() : ''
+
+    if (!normalizedEmail || !password) {
       res.status(400)
       throw new Error('Email and password are required')
     }
 
-    const user = await prisma.user.findUnique({ where: { email } })
+    const user = await prisma.user.findUnique({ where: { email: normalizedEmail } })
     if (!user) {
       res.status(401)
       throw new Error('Invalid email or password')
