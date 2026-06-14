@@ -1,0 +1,32 @@
+[
+  {
+    "id": 1,
+    "name": "Nocturne Peak-Lapel Suit",
+    "description": "Elevated tailoring in midnight wool.",
+    "brand": "House of Valerion",
+    "price": "1299.00",
+    "countInStock": 5,
+    "images": ["https://images.unsplash.com/photo-1541099649105-f69ad21f3246?w=1200&q=80"],
+    "category": { "id": 1, "name": "Luxury Suits", "slug": "luxury-suits" }
+  },
+  {
+    "id": 2,
+    "name": "Savile Row Midnight Tuxedo",
+    "description": "Black-tie perfection with silk lapels.",
+    "brand": "House of Valerion",
+    "price": "1899.00",
+    "countInStock": 2,
+    "images": ["https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=1200&q=80"],
+    "category": { "id": 1, "name": "Luxury Suits", "slug": "luxury-suits" }
+  },
+  {
+    "id": 3,
+    "name": "Formal White Shirt",
+    "description": "Crisp cotton for every occasion.",
+    "brand": "House of Valerion",
+    "price": "199.00",
+    "countInStock": 20,
+    "images": ["https://images.unsplash.com/photo-1541099649105-f69ad21f3246?w=1200&q=80"],
+    "category": { "id": 3, "name": "Formal Shirts", "slug": "formal-shirts" }
+  }
+]
