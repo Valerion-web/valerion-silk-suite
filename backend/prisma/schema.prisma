@@ -109,6 +109,14 @@ model Brand {
   updatedAt   DateTime @updatedAt
 }
 
+model Warehouse {
+  id             Int              @id @default(autoincrement())
+  name           String           @unique
+  stockMovements StockMovement[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+}
+
 model Product {
   id               Int              @id @default(autoincrement())
   name             String
@@ -181,7 +189,8 @@ model StockMovement {
   variantId     Int?
   product       Product          @relation(fields: [productId], references: [id])
   productId     Int
-  warehouseId   Int?
+  warehouse      Warehouse        @relation(fields: [warehouseId], references: [id])
+  warehouseId    Int
   changeQty     Int              @map("change")
   mode          String?
   reason        String?
@@ -193,6 +202,7 @@ model StockMovement {
 
   @@index([variantId])
   @@index([productId])
+  @@index([warehouseId])
   @@index([adminUserId])
   @@map("StockHistory")
 }

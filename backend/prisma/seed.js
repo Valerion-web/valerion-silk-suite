@@ -1,22 +1,9 @@
 import dotenv from 'dotenv'
-import { PrismaClient } from '@prisma/client'
-import { PrismaPg } from '@prisma/adapter-pg'
-import { Pool } from 'pg'
+import bcrypt from 'bcryptjs'
+import prisma from '../lib/prisma.js'
 import { generateSlug } from '../utils/generateSlug.js'
 
 dotenv.config()
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-})
-
-const adapter = new PrismaPg({
-  pool,
-})
-
-const prisma = new PrismaClient({
-  adapter,
-})
 
 const categories = [
   { name: 'Luxury Suits', slug: 'luxury-suits', description: 'Impeccably tailored suiting for evenings, weddings, and formal events.' },
@@ -241,24 +228,42 @@ async function main() {
   try {
     // Verify database connection
     console.log('🔌 Testing database connection...')
-      await prisma.$queryRawUnsafe('SELECT 1')
+    await prisma.$connect()
     console.log('✅ Database connection successful\n')
+
+    // Seed main warehouse first so required warehouse references can be established
+    const mainWarehouseName = 'Main Warehouse'
+    console.log('🏬 Seeding main warehouse...')
+    let mainWarehouse = await prisma.warehouse.findUnique({ where: { name: mainWarehouseName } })
+    if (!mainWarehouse) {
+      mainWarehouse = await prisma.warehouse.create({
+        data: {
+          name: mainWarehouseName,
+        },
+      })
+      console.log(`  ✓ ${mainWarehouse.name}`)
+    } else {
+      console.log(`  ✓ ${mainWarehouse.name} (already exists)`)
+    }
 
     // Seed categories first
     console.log('📁 Seeding categories...')
     const createdCategories = []
     for (const category of categories) {
-      const result = await prisma.category.upsert({
-        where: { slug: category.slug },
-        update: {},
-        create: {
-          name: category.name,
-          slug: category.slug,
-          description: category.description,
-        },
-      })
+      let result = await prisma.category.findUnique({ where: { slug: category.slug } })
+      if (!result) {
+        result = await prisma.category.create({
+          data: {
+            name: category.name,
+            slug: category.slug,
+            description: category.description,
+          },
+        })
+        console.log(`  ✓ ${result.name}`)
+      } else {
+        console.log(`  ✓ ${result.name} (already exists)`)
+      }
       createdCategories.push(result)
-      console.log(`  ✓ ${result.name}`)
     }
     console.log(`✅ ${createdCategories.length} categories seeded\n`)
 
@@ -326,6 +331,26 @@ async function main() {
       console.error(`\n❌ ${errorCount} products failed:`)
       errors.forEach(err => console.error(`  - ${err}`))
       throw new Error(`${errorCount} products failed to seed`)
+    }
+
+    // Seed admin user
+    const adminEmail = 'admin@valerion.test'
+    const adminPassword = 'SecureAdmin123'
+    const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } })
+    if (!existingAdmin) {
+      console.log('\n🛡️ Seeding admin user...')
+      await prisma.user.create({
+        data: {
+          name: 'Admin',
+          email: adminEmail,
+          password: await bcrypt.hash(adminPassword, 10),
+          role: 'ADMIN',
+        },
+      })
+      console.log(`  ✓ Admin user created: ${adminEmail}`)
+      console.log('  ✓ Password:', adminPassword)
+    } else {
+      console.log(`\n🛡️ Admin user already exists: ${adminEmail}`)
     }
 
     // Verify seeding
