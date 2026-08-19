@@ -6,68 +6,19 @@ datasource db {
   provider = "sqlite"
 }
 
-enum UserRole {
-  CUSTOMER
-  OWNER
-  MANAGER
-  SUPPORT
-  MARKETING
-  ADMIN
-}
-
-enum OrderStatus {
-  PLACED
-  PACKED
-  SHIPPED
-  OUT_FOR_DELIVERY
-  DELIVERED
-  CANCELLED
-  RETURN_REQUESTED
-  RETURNED
-  EXCHANGE_IN_PROGRESS
-}
-
-enum StockMovementType {
-  PURCHASE_IN
-  SALE
-  RETURN_RESTOCK
-  DAMAGE
-  MANUAL_ADJUSTMENT
-}
-
-enum CouponDiscountType {
-  PERCENTAGE
-  FLAT
-}
-
-enum ReturnRequestStatus {
-  REQUESTED
-  APPROVED
-  REJECTED
-  RECEIVED
-  REFUNDED
-  EXCHANGE_INITIATED
-  COMPLETED
-}
-
 model User {
-  id            Int        @id @default(autoincrement())
-  email         String     @unique
-  name          String?
-  password      String
-  role          UserRole   @default(CUSTOMER)
-  loyaltyTier   String?
-  lastOrderAt   DateTime?
-  orders            Order[]
-  addresses         Address[]
-  auditLogs         AuditLog[] @relation("ActorAuditLogs")
-  stockMovements    StockMovement[]
-  statusChanges     OrderStatusHistory[]
-  couponUsages      CouponUsage[]
-  processedReturns  ReturnRequest[]
-  productReviews    ProductReview[]
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  id             Int                  @id @default(autoincrement())
+  email          String               @unique
+  name           String?
+  password       String
+  role           String               @default("CUSTOMER")
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  orders         Order[]
+  addresses      Address[]
+  auditLogs      AuditLog[]           @relation("ActorAuditLogs")
+  statusChanges  OrderStatusHistory[]
+  productReviews ProductReview[]
 }
 
 model Address {
@@ -104,17 +55,16 @@ model Brand {
   description String?
   logo        String?
   status      String   @default("ACTIVE")
-  products    Product[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
 
 model Warehouse {
-  id             Int              @id @default(autoincrement())
-  name           String           @unique
-  stockMovements StockMovement[]
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  id             Int            @id @default(autoincrement())
+  name           String         @unique
+  stockMovements StockHistory[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 }
 
 model Product {
@@ -125,14 +75,19 @@ model Product {
   shortDescription String?
   fullDescription  String?
   description      String?
-  brand            Brand?           @relation(fields: [brandId], references: [id])
-  brandId          Int?
+  brand            String?
   price            Float
   discountPercent  Float            @default(0)
   tax              Float            @default(0)
+  countInStock     Int              @default(0)
   lowStockAlert    Int              @default(5)
+  availability     String           @default("IN_STOCK")
+  warehouse        String           @default("Main")
+  images           String?
   collection       String?
   tags             String?
+  size             String?
+  color            String?
   material         String?
   metaTitle        String?
   metaDescription  String?
@@ -140,10 +95,11 @@ model Product {
   status           String           @default("ACTIVE")
   category         Category?        @relation(fields: [categoryId], references: [id])
   categoryId       Int?
-  images           ProductImage[]
+  imagesList       ProductImage[]
   variants         ProductVariant[]
   reviews          ProductReview[]
-  stockMovements   StockMovement[]
+  stockMovements   StockHistory[]
+  orderItems       OrderItem[]
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 }
@@ -163,184 +119,85 @@ model ProductImage {
 }
 
 model ProductVariant {
-  id               Int              @id @default(autoincrement())
-  product          Product          @relation(fields: [productId], references: [id])
+  id               Int            @id @default(autoincrement())
+  product          Product        @relation(fields: [productId], references: [id])
   productId        Int
-  sku              String           @unique
+  sku              String         @unique
   size             String?
   color            String?
   priceOverride    Float?
-  quantityOnHand   Int              @default(0)
-  reorderThreshold Int              @default(5)
-  status           String           @default("ACTIVE")
-  orderItems       OrderItem[]
-  stockMovements   StockMovement[]
-  exchangeReturns  ReturnRequest[]
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+  quantityOnHand   Int            @default(0)
+  reorderThreshold Int            @default(5)
+  status           String         @default("ACTIVE")
+  stockMovements   StockHistory[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 
   @@index([productId])
   @@index([sku])
 }
 
-model StockMovement {
-  id            Int              @id @default(autoincrement())
-  variant       ProductVariant?  @relation(fields: [variantId], references: [id])
-  variantId     Int?
-  product       Product          @relation(fields: [productId], references: [id])
-  productId     Int
-  warehouse      Warehouse        @relation(fields: [warehouseId], references: [id])
-  warehouseId    Int
-  changeQty     Int              @map("change")
-  mode          String?
-  reason        String?
-  referenceId   String?          @map("reference")
-  adminUser     User?            @relation(fields: [adminUserId], references: [id])
-  adminUserId   Int?             @map("adminId")
-  type          StockMovementType?
-  createdAt     DateTime         @default(now())
+model StockHistory {
+  id          Int             @id @default(autoincrement())
+  variant     ProductVariant? @relation(fields: [variantId], references: [id])
+  variantId   Int?
+  product     Product         @relation(fields: [productId], references: [id])
+  productId   Int
+  warehouse   Warehouse?      @relation(fields: [warehouseId], references: [id])
+  warehouseId Int?
+  change      Int             @map("change")
+  mode        String?
+  reason      String?
+  referenceId String?         @map("reference")
+  adminId     Int?            @map("adminId")
+  type        String?
+  createdAt   DateTime        @default(now())
 
   @@index([variantId])
   @@index([productId])
   @@index([warehouseId])
-  @@index([adminUserId])
   @@map("StockHistory")
 }
 
 model Order {
-  id             Int                  @id @default(autoincrement())
-  user           User                 @relation(fields: [userId], references: [id])
-  userId         Int
-  status         OrderStatus          @default(PLACED)
-  totalPrice     Float
-  currency       String               @default("INR")
-  courier        String?
-  trackingNumber String?
-  items          OrderItem[]
-  payments       Payment[]
-  statusHistory  OrderStatusHistory[]
-  returnRequests ReturnRequest[]
-  couponUsages   CouponUsage[]
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
-
-  @@index([userId])
-  @@index([status])
+  id            Int                  @id @default(autoincrement())
+  user          User                 @relation(fields: [userId], references: [id])
+  userId        Int
+  status        String               @default("PLACED")
+  totalPrice    Float
+  currency      String               @default("INR")
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  items         OrderItem[]
+  statusHistory OrderStatusHistory[]
 }
 
 model OrderItem {
-  id             Int             @id @default(autoincrement())
-  order          Order           @relation(fields: [orderId], references: [id])
-  orderId        Int
-  variant        ProductVariant  @relation(fields: [variantId], references: [id])
-  variantId      Int
-  quantity       Int             @default(1)
-  unitPrice      Float
-  taxAmount      Float           @default(0)
-  discountAmount Float           @default(0)
-  returnRequests ReturnRequest[]
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  id         Int     @id @default(autoincrement())
+  order      Order   @relation(fields: [orderId], references: [id])
+  orderId    Int
+  product    Product @relation(fields: [productId], references: [id])
+  productId  Int
+  quantity   Int     @default(1)
+  price      Float
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@index([orderId])
-  @@index([variantId])
+  @@index([productId])
 }
 
 model OrderStatusHistory {
-  id          Int         @id @default(autoincrement())
-  order       Order       @relation(fields: [orderId], references: [id])
+  id          Int      @id @default(autoincrement())
+  order       Order    @relation(fields: [orderId], references: [id])
   orderId     Int
-  status      OrderStatus
+  status      String
   note        String?
-  changedBy   User?       @relation(fields: [changedById], references: [id])
+  changedBy   User?    @relation(fields: [changedById], references: [id])
   changedById Int?
-  createdAt   DateTime    @default(now())
+  createdAt   DateTime @default(now())
 
   @@index([orderId])
-}
-
-model Payment {
-  id            Int      @id @default(autoincrement())
-  order         Order    @relation(fields: [orderId], references: [id])
-  orderId       Int
-  amount        Float
-  currency      String   @default("INR")
-  method        String
-  status        String
-  provider      String?
-  transactionId String?
-  capturedAt    DateTime?
-  createdAt     DateTime @default(now())
-
-  @@index([orderId])
-}
-
-model Coupon {
-  id            Int              @id @default(autoincrement())
-  code          String           @unique
-  discountType  CouponDiscountType
-  value         Float
-  active        Boolean          @default(true)
-  usageLimit    Int?
-  usageCount    Int              @default(0)
-  minOrderValue Float?
-  startsAt      DateTime?
-  endsAt        DateTime?
-  usages        CouponUsage[]
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-}
-
-model CouponUsage {
-  id        Int      @id @default(autoincrement())
-  coupon    Coupon   @relation(fields: [couponId], references: [id])
-  couponId  Int
-  order     Order    @relation(fields: [orderId], references: [id])
-  orderId   Int
-  user      User     @relation(fields: [userId], references: [id])
-  userId    Int
-  createdAt DateTime @default(now())
-
-  @@index([couponId])
-  @@index([orderId])
-  @@index([userId])
-}
-
-model ReturnRequest {
-  id                Int                 @id @default(autoincrement())
-  order             Order               @relation(fields: [orderId], references: [id])
-  orderId           Int
-  orderItem         OrderItem           @relation(fields: [orderItemId], references: [id])
-  orderItemId       Int
-  reason            String
-  status            ReturnRequestStatus @default(REQUESTED)
-  requestedAt       DateTime            @default(now())
-  processedAt       DateTime?
-  processedBy       User?               @relation(fields: [processedById], references: [id])
-  processedById     Int?
-  resolution        String?
-  refundAmount      Float?
-  exchangeVariant   ProductVariant?     @relation(fields: [exchangeVariantId], references: [id])
-  exchangeVariantId Int?
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
-
-  @@index([orderId])
-  @@index([orderItemId])
-}
-
-model Banner {
-  id         Int      @id @default(autoincrement())
-  title      String
-  image      String
-  link       String?
-  placement  String
-  active     Boolean  @default(true)
-  startsAt   DateTime
-  endsAt     DateTime
-  sortOrder  Int      @default(0)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
 }
 
 model ProductReview {

@@ -20,40 +20,18 @@ import Checkout from "@/routes/checkout";
 import TrackOrder from "@/routes/track-order";
 import Wishlist from "@/routes/wishlist";
 import Contact from "@/routes/contact";
+import AdminRoutePage from "@/routes/admin.tsx";
 
 const queryClient = new QueryClient();
 
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <ShopProvider>
-          <BrowserRouter>
+      <BrowserRouter>
+        <AuthProvider>
+          <ShopProvider>
             <ScrollToTop />
-            <div className="min-h-screen flex flex-col bg-background overflow-x-hidden">
-              <Navbar />
-              <div className="flex-1 w-full">
-                <Routes>
-                  <Route path="/" element={<Index />} />
-                  <Route path="/about" element={<About />} />
-                  <Route path="/shop" element={<Shop />} />
-                  <Route path="/category" element={<Category />}>
-                    <Route path=":slug" element={<CategorySlug />} />
-                  </Route>
-                  <Route path="/collection" element={<Category />}>
-                    <Route path=":slug" element={<CategorySlug />} />
-                  </Route>
-                  <Route path="/product/:productId" element={<Product />} />
-                  <Route path="/cart" element={<Cart />} />
-                  <Route path="/checkout" element={<Checkout />} />
-                  <Route path="/track-order" element={<TrackOrder />} />
-                  <Route path="/wishlist" element={<Wishlist />} />
-                  <Route path="/contact" element={<Contact />} />
-                  <Route path="*" element={<NotFoundComponent />} />
-                </Routes>
-              </div>
-              <Footer />
-            </div>
+            <AppShell />
             <Toaster
               position="top-center"
               theme="dark"
@@ -67,14 +45,73 @@ function App() {
                 },
               }}
             />
-          </BrowserRouter>
-        </ShopProvider>
-      </AuthProvider>
+          </ShopProvider>
+        </AuthProvider>
+      </BrowserRouter>
     </QueryClientProvider>
   );
 }
 
 export default App;
+
+function AppShell() {
+  const { pathname } = useLocation();
+  const isAdminRoute = pathname.startsWith("/admin");
+
+  if (isAdminRoute) {
+    return (
+      <div className="min-h-screen overflow-visible bg-background">
+        <Routes>
+          <Route path="/" element={<Index />} />
+          <Route path="/about" element={<About />} />
+          <Route path="/shop" element={<Shop />} />
+          <Route path="/category" element={<Category />}>
+            <Route path=":slug" element={<CategorySlug />} />
+          </Route>
+          <Route path="/collection" element={<Category />}>
+            <Route path=":slug" element={<CategorySlug />} />
+          </Route>
+          <Route path="/product/:productId" element={<Product />} />
+          <Route path="/cart" element={<Cart />} />
+          <Route path="/checkout" element={<Checkout />} />
+          <Route path="/track-order" element={<TrackOrder />} />
+          <Route path="/wishlist" element={<Wishlist />} />
+          <Route path="/contact" element={<Contact />} />
+          <Route path="/admin/*" element={<AdminRoutePage />} />
+          <Route path="*" element={<NotFoundComponent />} />
+        </Routes>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col bg-background overflow-x-hidden">
+      <Navbar />
+      <div className="flex-1 w-full">
+        <Routes>
+          <Route path="/" element={<Index />} />
+          <Route path="/about" element={<About />} />
+          <Route path="/shop" element={<Shop />} />
+          <Route path="/category" element={<Category />}>
+            <Route path=":slug" element={<CategorySlug />} />
+          </Route>
+          <Route path="/collection" element={<Category />}>
+            <Route path=":slug" element={<CategorySlug />} />
+          </Route>
+          <Route path="/product/:productId" element={<Product />} />
+          <Route path="/cart" element={<Cart />} />
+          <Route path="/checkout" element={<Checkout />} />
+          <Route path="/track-order" element={<TrackOrder />} />
+          <Route path="/wishlist" element={<Wishlist />} />
+          <Route path="/contact" element={<Contact />} />
+          <Route path="/admin/*" element={<AdminRoutePage />} />
+          <Route path="*" element={<NotFoundComponent />} />
+        </Routes>
+      </div>
+      <Footer />
+    </div>
+  );
+}
 
 function ScrollToTop() {
   const { pathname } = useLocation();

@@ -282,9 +282,9 @@ async function main() {
           throw new Error('Missing required fields: name, description, price, or countInStock')
         }
 
-        // Validate and ensure images is an array
-        const images = Array.isArray(product.images) ? product.images : []
-        if (images.length === 0) {
+        // Validate and ensure images is a single string value for the current schema
+        const images = Array.isArray(product.images) ? product.images.join(',') : ''
+        if (!images) {
           console.warn(`  ⚠️  ${product.name} - No images provided`)
         }
 
@@ -301,8 +301,8 @@ async function main() {
             name: product.name,
             description: product.description,
             brand: product.brand || 'House of Valerion',
-            price: product.price,
-            countInStock: product.countInStock,
+            price: Number(product.price),
+            countInStock: Number(product.countInStock),
             images: images,
             categoryId: category.id,
           },
@@ -311,8 +311,8 @@ async function main() {
             slug,
             description: product.description,
             brand: product.brand || 'House of Valerion',
-            price: product.price,
-            countInStock: product.countInStock,
+            price: Number(product.price),
+            countInStock: Number(product.countInStock),
             images: images,
             categoryId: category.id,
           },
@@ -350,7 +350,17 @@ async function main() {
       console.log(`  ✓ Admin user created: ${adminEmail}`)
       console.log('  ✓ Password:', adminPassword)
     } else {
-      console.log(`\n🛡️ Admin user already exists: ${adminEmail}`)
+      const passwordMatches = await bcrypt.compare(adminPassword, existingAdmin.password)
+      if (!passwordMatches) {
+        console.log(`\n🛡️ Admin user exists but password is out of sync, updating password for: ${adminEmail}`)
+        await prisma.user.update({
+          where: { email: adminEmail },
+          data: { password: await bcrypt.hash(adminPassword, 10) },
+        })
+        console.log(`  ✓ Admin password reset to known value for ${adminEmail}`)
+      } else {
+        console.log(`\n🛡️ Admin user already exists: ${adminEmail}`)
+      }
     }
 
     // Verify seeding
@@ -360,9 +370,9 @@ async function main() {
     const productsWithImages = await prisma.product.count({
       where: {
         images: {
-          hasSome: []
-        }
-      }
+          not: null,
+        },
+      },
     })
 
     console.log(`  Products in database: ${productCount}`)

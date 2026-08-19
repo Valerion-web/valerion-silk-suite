@@ -1,12 +1,15 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Heart, Eye, Star, ShoppingBag } from "lucide-react";
+import { Heart, Eye, Star, ShoppingBag, AlertCircle } from "lucide-react";
 import type { Product } from "@/lib/products";
 import { useShop } from "@/lib/store";
+import { getProductImage } from "@/lib/image-utils";
+import { useState } from "react";
 
 export function ProductCard({ product, index = 0 }: { product: Product; index?: number }) {
   const { toggleWishlist, inWishlist, addToCart } = useShop();
   const wished = inWishlist(product.id);
+  const [imageError, setImageError] = useState(false);
 
   const handleWishlist = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -23,8 +26,21 @@ export function ProductCard({ product, index = 0 }: { product: Product; index?: 
     );
   };
 
+  const handleImageError = () => {
+    console.warn(`Image failed to load for product ${product.id} (${product.name})`);
+    setImageError(true);
+  };
+
   const rating = product.rating ?? 4.8;
   const reviews = product.reviews ?? 124;
+  
+  // Support both local product format (image: string) and API format (images: string[])
+  // Log the images array to help diagnose missing image rendering
+  console.log(`🔎 [ProductCard] images for product ${product.id}:`, (product as any).images);
+  // Prefer a direct first-image reference if available to avoid utility transformations
+  const productImage = Array.isArray((product as any).images) && (product as any).images.length > 0
+    ? (product as any).images[0]
+    : product.image || getProductImage((product as any).images);
 
   return (
     <motion.div
@@ -36,21 +52,30 @@ export function ProductCard({ product, index = 0 }: { product: Product; index?: 
     >
       <div className="relative overflow-hidden bg-background aspect-[3/4] hover-zoom-parent rounded-[32px] shadow-card">
         <Link to={`/product/${product.id}`} className="absolute inset-0 block" aria-label={`Open ${product.name}`}>
-          <img
-            src={product.image}
-            alt={product.name}
-            loading="lazy"
-            className="absolute inset-0 h-full w-full object-cover hover-zoom-img"
-          />
-          {product.altImage && (
-            <img
-              src={product.altImage}
-              alt=""
-              loading="lazy"
-              className="absolute inset-0 h-full w-full object-cover opacity-0 group-hover:opacity-100 transition-opacity duration-700"
-            />
+          {imageError ? (
+            <div className="absolute inset-0 h-full w-full flex items-center justify-center bg-slate-200">
+              <AlertCircle className="h-8 w-8 text-muted-foreground" />
+            </div>
+          ) : (
+            <>
+              <img
+                src={productImage}
+                alt={product.name}
+                loading="lazy"
+                onError={handleImageError}
+                className="absolute inset-0 h-full w-full object-cover hover-zoom-img z-0"
+              />
+              {product.altImage && (
+                <img
+                  src={product.altImage}
+                  alt=""
+                  loading="lazy"
+                  className="absolute inset-0 h-full w-full object-cover opacity-0 group-hover:opacity-100 transition-opacity duration-700"
+                />
+              )}
+            </>
           )}
-          <div className="absolute inset-0 bg-gradient-to-t from-midnight/30 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+          <div className="absolute inset-0 bg-gradient-to-t from-midnight/30 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
 
           {product.badge && (
             <span className="absolute top-4 left-4 bg-frost/95 text-midnight text-[9px] tracking-luxury uppercase px-3 py-1.5">

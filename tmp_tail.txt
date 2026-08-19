@@ -1,0 +1,120 @@
+        setForm({
+          storeName: data.storeName || "",
+          supportEmail: data.supportEmail || "",
+          currency: data.currency || "INR",
+          taxRate: data.taxRate != null ? String(data.taxRate) : "0.18",
+          freeShippingThreshold: data.freeShippingThreshold != null ? String(data.freeShippingThreshold) : "999",
+          maintenanceMode: Boolean(data.maintenanceMode),
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Unable to load settings");
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      const payload = {
+        storeName: form.storeName,
+        supportEmail: form.supportEmail,
+        currency: form.currency,
+        taxRate: Number(form.taxRate),
+        freeShippingThreshold: Number(form.freeShippingThreshold),
+        maintenanceMode: form.maintenanceMode,
+      };
+      const updated = await fetchAdmin("/settings", { method: "PUT", body: JSON.stringify(payload) });
+      setSettings(updated);
+      toast.success("Settings saved", { className: "luxury-toast" });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to save settings", { className: "luxury-toast" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <LoadingShell />;
+  if (error) return <ErrorState message={error} />;
+
+  return (
+    <section className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_20px_60px_-32px_rgba(4,30,66,0.28)]">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.3em] text-[#D4AF37]">Store configuration</p>
+          <h2 className="mt-2 text-xl font-semibold text-[#041E42]">Settings</h2>
+        </div>
+      </div>
+      <form className="grid gap-4 md:grid-cols-2" onSubmit={handleSubmit}>
+        <label className="text-sm text-slate-600">
+          <span className="mb-2 block font-semibold text-[#041E42]">Store name</span>
+          <input
+            value={form.storeName}
+            onChange={(event) => setForm((current) => ({ ...current, storeName: event.target.value }))}
+            className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+          />
+        </label>
+        <label className="text-sm text-slate-600">
+          <span className="mb-2 block font-semibold text-[#041E42]">Support email</span>
+          <input
+            type="email"
+            value={form.supportEmail}
+            onChange={(event) => setForm((current) => ({ ...current, supportEmail: event.target.value }))}
+            className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+          />
+        </label>
+        <label className="text-sm text-slate-600">
+          <span className="mb-2 block font-semibold text-[#041E42]">Currency</span>
+          <input
+            value={form.currency}
+            onChange={(event) => setForm((current) => ({ ...current, currency: event.target.value }))}
+            className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+          />
+        </label>
+        <label className="text-sm text-slate-600">
+          <span className="mb-2 block font-semibold text-[#041E42]">Tax rate</span>
+          <input
+            type="number"
+            step="0.01"
+            value={form.taxRate}
+            onChange={(event) => setForm((current) => ({ ...current, taxRate: event.target.value }))}
+            className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+          />
+        </label>
+        <label className="text-sm text-slate-600">
+          <span className="mb-2 block font-semibold text-[#041E42]">Free shipping threshold</span>
+          <input
+            type="number"
+            value={form.freeShippingThreshold}
+            onChange={(event) => setForm((current) => ({ ...current, freeShippingThreshold: event.target.value }))}
+            className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+          />
+        </label>
+        <label className="flex items-center gap-3 text-sm text-slate-600 md:col-span-2">
+          <input
+            type="checkbox"
+            checked={form.maintenanceMode}
+            onChange={(event) => setForm((current) => ({ ...current, maintenanceMode: event.target.checked }))}
+            className="h-4 w-4 rounded border-slate-300 text-[#041E42] focus:ring-[#D4AF37]"
+          />
+          <span className="font-semibold text-[#041E42]">Maintenance mode</span>
+        </label>
+        <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <button
+            type="submit"
+            disabled={saving}
+            className="inline-flex items-center justify-center rounded-full bg-[#041E42] px-5 py-2.5 text-sm font-medium text-white transition hover:bg-[#072e63] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? "Saving..." : "Save settings"}
+          </button>
+          <p className="text-sm text-[#4B5563]">Store settings are updated instantly for administrative staff.</p>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+export default AdminRoutePage;

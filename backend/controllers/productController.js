@@ -1,5 +1,4 @@
 import prisma from '../lib/prisma.js'
-import { Prisma } from '@prisma/client'
 import { generateSlug } from '../utils/generateSlug.js'
 import fs from 'fs/promises'
 import path from 'path'
@@ -107,7 +106,7 @@ export const createProduct = async (req, res, next) => {
         slug: generateSlug(name),
         description,
         brand,
-        price: new Prisma.Decimal(price),
+        price: Number(price),
         countInStock,
         images: images || [],
         category: categoryId ? { connect: { id: Number(categoryId) } } : undefined,
