@@ -1,6 +1,14 @@
 import prisma from '../lib/prisma.js'
+import bcrypt from 'bcryptjs'
+import { storeWhere } from '../middleware/storeMiddleware.js'
 
-const reviewStore = []
+const adminRoles = ['SUPER_ADMIN', 'ADMIN', 'BRAND_MANAGER', 'INVENTORY_MANAGER', 'ORDER_MANAGER', 'MARKETING_MANAGER']
+const VALID_ORDER_STATUSES = new Set(['PLACED', 'PENDING', 'PROCESSING', 'PACKED', 'SHIPPED', 'DELIVERED', 'CANCELLED'])
+
+const storeScope = (req, where = {}) => {
+  return storeWhere(req, where)
+}
+
 let settingsStore = {
   storeName: 'House of Valerion',
   supportEmail: 'support@valerion.com',
@@ -132,8 +140,8 @@ export const getAdminDashboard = async (req, res, next) => {
     const { from: prevFrom, to: prevTo } = getComparableRange(from, to)
 
     const [currentOrders, previousOrders] = await Promise.all([
-      prisma.order.findMany({ where: { createdAt: { gte: from, lte: to } }, select: { id: true, totalPrice: true } }),
-      prisma.order.findMany({ where: { createdAt: { gte: prevFrom, lte: prevTo } }, select: { id: true, totalPrice: true } }),
+      prisma.order.findMany({ where: storeScope(req, { createdAt: { gte: from, lte: to } }), select: { id: true, totalPrice: true } }),
+      prisma.order.findMany({ where: storeScope(req, { createdAt: { gte: prevFrom, lte: prevTo } }), select: { id: true, totalPrice: true } }),
     ])
 
     const sum = (arr) => arr.reduce((s, o) => s + formatPrice(o.totalPrice || 0), 0)
@@ -166,6 +174,7 @@ export const getAdminDashboard = async (req, res, next) => {
 export const getAdminProducts = async (req, res, next) => {
   try {
     const products = await prisma.product.findMany({
+      where: storeScope(req),
       orderBy: { createdAt: 'desc' },
       include: { category: true },
     })
@@ -183,8 +192,8 @@ export const getAdminProductById = async (req, res, next) => {
       throw new Error('Invalid product ID')
     }
 
-    const product = await prisma.product.findUnique({
-      where: { id: productId },
+    const product = await prisma.product.findFirst({
+      where: storeScope(req, { id: productId }),
       include: { category: true },
     })
 
@@ -220,6 +229,7 @@ export const createAdminProduct = async (req, res, next) => {
       availability,
       warehouse,
       brand,
+      brandId,
       categoryId,
       images,
       collection,
@@ -263,6 +273,7 @@ export const createAdminProduct = async (req, res, next) => {
       metaDescription,
       keywords: serializeStringArray(keywords),
       status: status || 'ACTIVE',
+      storeId: req.store.id,
     }
 
     if (categoryId !== undefined && categoryId !== null && categoryId !== '') {
@@ -271,7 +282,27 @@ export const createAdminProduct = async (req, res, next) => {
         res.status(400)
         throw new Error('Category ID must be a number')
       }
+      const category = await prisma.category.findFirst({ where: storeScope(req, { id: parsedCategoryId }) })
+      if (!category) {
+        res.status(400)
+        throw new Error('Category does not belong to selected store')
+      }
       data.category = { connect: { id: parsedCategoryId } }
+    }
+
+    if (brandId !== undefined && brandId !== null && brandId !== '') {
+      const parsedBrandId = Number(brandId)
+      if (Number.isNaN(parsedBrandId)) {
+        res.status(400)
+        throw new Error('Brand ID must be a number')
+      }
+      const selectedBrand = await prisma.brand.findFirst({ where: storeScope(req, { id: parsedBrandId }) })
+      if (!selectedBrand) {
+        res.status(400)
+        throw new Error('Brand does not belong to selected store')
+      }
+      data.brand = selectedBrand.name
+      data.brandRelation = { connect: { id: parsedBrandId } }
     }
 
     const createdProduct = await prisma.product.create({ data, include: { category: true } })
@@ -304,6 +335,7 @@ export const updateAdminProduct = async (req, res, next) => {
       availability,
       warehouse,
       brand,
+      brandId,
       categoryId,
       images,
       collection,
@@ -357,6 +389,39 @@ export const updateAdminProduct = async (req, res, next) => {
       }
     }
 
+    if (brandId !== undefined) {
+      if (brandId === '' || brandId === null) {
+        data.brandRelation = { disconnect: true }
+      } else {
+        const parsedBrandId = Number(brandId)
+        if (Number.isNaN(parsedBrandId)) {
+          res.status(400)
+          throw new Error('Brand ID must be a number')
+        }
+        const selectedBrand = await prisma.brand.findFirst({ where: storeScope(req, { id: parsedBrandId }) })
+        if (!selectedBrand) {
+          res.status(400)
+          throw new Error('Brand does not belong to selected store')
+        }
+        data.brand = selectedBrand.name
+        data.brandRelation = { connect: { id: parsedBrandId } }
+      }
+    }
+
+    if (categoryId !== undefined && categoryId !== null && categoryId !== '') {
+      const parsedCategoryId = Number(categoryId)
+      const selectedCategory = await prisma.category.findFirst({ where: storeScope(req, { id: parsedCategoryId }) })
+      if (!selectedCategory) {
+        res.status(400)
+        throw new Error('Category does not belong to selected store')
+      }
+    }
+
+    const existingProduct = await prisma.product.findFirst({ where: storeScope(req, { id: productId }) })
+    if (!existingProduct) {
+      res.status(404)
+      throw new Error('Product not found')
+    }
     const updatedProduct = await prisma.product.update({
       where: { id: productId },
       data,
@@ -377,7 +442,12 @@ export const deleteAdminProduct = async (req, res, next) => {
       throw new Error('Invalid product ID')
     }
 
-    await prisma.product.delete({ where: { id: productId } })
+    const product = await prisma.product.findFirst({ where: storeScope(req, { id: productId }) })
+    if (!product) {
+      res.status(404)
+      throw new Error('Product not found')
+    }
+    await prisma.product.delete({ where: { id: product.id } })
     res.json({ message: 'Product deleted successfully' })
   } catch (error) {
     next(error)
@@ -386,10 +456,31 @@ export const deleteAdminProduct = async (req, res, next) => {
 
 export const getAdminOrders = async (req, res, next) => {
   try {
+    const status = String(req.query.status || '').trim().toUpperCase()
+    const search = String(req.query.search || req.query.q || '').trim()
+    const where = storeScope(req)
+
+    if (status && VALID_ORDER_STATUSES.has(status)) {
+      where.status = status
+    }
+
+    if (search) {
+      const orderId = Number(search)
+      where.OR = [
+        ...(Number.isFinite(orderId) ? [{ id: orderId }] : []),
+        { user: { name: { contains: search, mode: 'insensitive' } } },
+        { user: { email: { contains: search, mode: 'insensitive' } } },
+        { items: { some: { product: { name: { contains: search, mode: 'insensitive' } } } } },
+      ]
+    }
+
     const orders = await prisma.order.findMany({
+      where,
       include: {
         user: true,
-        items: { include: { product: true } },
+        store: true,
+        items: { include: { product: true, variant: true } },
+        statusHistory: { include: { changedBy: true }, orderBy: { createdAt: 'asc' } },
       },
       orderBy: { createdAt: 'desc' },
     })
@@ -402,16 +493,40 @@ export const getAdminOrders = async (req, res, next) => {
 export const updateAdminOrderStatus = async (req, res, next) => {
   try {
     const orderId = Number(req.params.id)
-    const { status } = req.body || {}
+    const incomingStatus = String(req.body?.status || '').trim().toUpperCase()
+    const note = String(req.body?.note || `Order status changed by admin ${req.user?.name || req.user?.id || 'system'}`)
+
     if (Number.isNaN(orderId)) {
       res.status(400)
       throw new Error('Invalid order ID')
     }
+    if (!VALID_ORDER_STATUSES.has(incomingStatus)) {
+      res.status(400)
+      throw new Error('Unsupported order status')
+    }
+
+    const order = await prisma.order.findFirst({ where: storeScope(req, { id: orderId }) })
+    if (!order) {
+      res.status(404)
+      throw new Error('Order not found')
+    }
+
     const updatedOrder = await prisma.order.update({
-      where: { id: orderId },
-      data: { status },
+      where: { id: order.id },
+      data: { status: incomingStatus },
+      include: { user: true, items: { include: { product: true, variant: true } }, statusHistory: { orderBy: { createdAt: 'asc' } } },
     })
-    res.json(updatedOrder)
+
+    await prisma.orderStatusHistory.create({
+      data: {
+        orderId: order.id,
+        status: incomingStatus,
+        note,
+        changedById: req.user.id,
+      },
+    })
+
+    res.json(formatOrder(updatedOrder))
   } catch (error) {
     next(error)
   }
@@ -424,8 +539,13 @@ export const deleteAdminOrder = async (req, res, next) => {
       res.status(400)
       throw new Error('Invalid order ID')
     }
-    await prisma.orderItem.deleteMany({ where: { orderId } })
-    await prisma.order.delete({ where: { id: orderId } })
+    const order = await prisma.order.findFirst({ where: storeScope(req, { id: orderId }) })
+    if (!order) {
+      res.status(404)
+      throw new Error('Order not found')
+    }
+    await prisma.orderItem.deleteMany({ where: { orderId: order.id } })
+    await prisma.order.delete({ where: { id: order.id } })
     res.json({ message: 'Order deleted successfully' })
   } catch (error) {
     next(error)
@@ -435,6 +555,7 @@ export const deleteAdminOrder = async (req, res, next) => {
 export const getAdminCategories = async (req, res, next) => {
   try {
     const categories = await prisma.category.findMany({
+      where: storeScope(req),
       include: { _count: { select: { products: true } } },
       orderBy: { createdAt: 'desc' },
     })
@@ -458,7 +579,7 @@ export const createAdminCategory = async (req, res, next) => {
       throw new Error('Category name is required')
     }
     const slug = `${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`
-    const category = await prisma.category.create({ data: { name, slug, description } })
+    const category = await prisma.category.create({ data: { name, slug, description, storeId: req.store.id } })
     res.status(201).json({ id: category.id, name: category.name, slug: category.slug, description: category.description, productCount: 0 })
   } catch (error) {
     next(error)
@@ -473,8 +594,13 @@ export const updateAdminCategory = async (req, res, next) => {
       res.status(400)
       throw new Error('Invalid category ID')
     }
+    const existing = await prisma.category.findFirst({ where: storeScope(req, { id: categoryId }) })
+    if (!existing) {
+      res.status(404)
+      throw new Error('Category not found')
+    }
     const category = await prisma.category.update({
-      where: { id: categoryId },
+      where: { id: existing.id },
       data: { ...(name !== undefined ? { name } : {}), ...(description !== undefined ? { description } : {}) },
     })
     res.json({ id: category.id, name: category.name, slug: category.slug, description: category.description, productCount: 0 })
@@ -490,8 +616,39 @@ export const deleteAdminCategory = async (req, res, next) => {
       res.status(400)
       throw new Error('Invalid category ID')
     }
-    await prisma.category.delete({ where: { id: categoryId } })
+    const category = await prisma.category.findFirst({ where: storeScope(req, { id: categoryId }) })
+    if (!category) {
+      res.status(404)
+      throw new Error('Category not found')
+    }
+    await prisma.category.delete({ where: { id: category.id } })
     res.json({ message: 'Category deleted successfully' })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const getAdminStores = async (req, res, next) => {
+  try {
+    const stores = await prisma.store.findMany({
+      where: { status: 'ACTIVE', tenant: { status: 'ACTIVE' } },
+      include: { tenant: true },
+      orderBy: { name: 'asc' },
+    })
+
+    const visibleStores = req.contextType === 'PARENT'
+      ? stores.filter((store) => (req.childStoreIds || []).includes(store.id))
+      : req.accessScope === 'ALL_STORES'
+        ? stores
+        : stores.filter((store) => store.id === req.store.id)
+
+    res.json(visibleStores.map((store) => ({
+      id: store.id,
+      name: store.name,
+      slug: store.slug,
+      status: store.status,
+      tenant: store.tenant ? { id: store.tenant.id, name: store.tenant.name, slug: store.tenant.slug } : null,
+    })))
   } catch (error) {
     next(error)
   }
@@ -499,7 +656,7 @@ export const deleteAdminCategory = async (req, res, next) => {
 
 export const getAdminBrands = async (req, res, next) => {
   try {
-    const brands = await prisma.brand.findMany({ orderBy: { createdAt: 'desc' } })
+    const brands = await prisma.brand.findMany({ where: storeScope(req), orderBy: { createdAt: 'desc' } })
     res.json(brands.map(formatBrand))
   } catch (error) {
     next(error)
@@ -514,7 +671,7 @@ export const createAdminBrand = async (req, res, next) => {
       throw new Error('Brand name is required')
     }
     const slug = `${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`
-    const brand = await prisma.brand.create({ data: { name, slug, description, logo, status: status || 'ACTIVE' } })
+    const brand = await prisma.brand.create({ data: { name, slug, description, logo, status: status || 'ACTIVE', storeId: req.store.id } })
     res.status(201).json(formatBrand(brand))
   } catch (error) {
     next(error)
@@ -529,8 +686,13 @@ export const updateAdminBrand = async (req, res, next) => {
       throw new Error('Invalid brand ID')
     }
     const { name, description, logo, status } = req.body || {}
+    const existing = await prisma.brand.findFirst({ where: storeScope(req, { id: brandId }) })
+    if (!existing) {
+      res.status(404)
+      throw new Error('Brand not found')
+    }
     const brand = await prisma.brand.update({
-      where: { id: brandId },
+      where: { id: existing.id },
       data: {
         ...(name !== undefined ? { name } : {}),
         ...(description !== undefined ? { description } : {}),
@@ -551,7 +713,12 @@ export const deleteAdminBrand = async (req, res, next) => {
       res.status(400)
       throw new Error('Invalid brand ID')
     }
-    await prisma.brand.delete({ where: { id: brandId } })
+    const brand = await prisma.brand.findFirst({ where: storeScope(req, { id: brandId }) })
+    if (!brand) {
+      res.status(404)
+      throw new Error('Brand not found')
+    }
+    await prisma.brand.delete({ where: { id: brand.id } })
     res.json({ message: 'Brand deleted successfully' })
   } catch (error) {
     next(error)
@@ -560,10 +727,11 @@ export const deleteAdminBrand = async (req, res, next) => {
 
 export const getAdminUsers = async (req, res, next) => {
   try {
-    const users = await prisma.user.findMany({ orderBy: { createdAt: 'desc' } })
+    const users = await prisma.user.findMany({ where: storeScope(req), orderBy: { createdAt: 'desc' } })
 
     const orderAgg = await prisma.order.groupBy({
       by: ['userId'],
+      where: storeScope(req),
       _count: { id: true },
       _sum: { totalPrice: true },
     })
@@ -572,8 +740,86 @@ export const getAdminUsers = async (req, res, next) => {
 
     res.json(users.map((user) => {
       const agg = aggMap.get(user.id) || { orderCount: 0, totalSpend: 0 }
-      return { id: user.id, name: user.name, email: user.email, role: user.role, createdAt: user.createdAt, status: 'ACTIVE', orders: agg.orderCount, totalSpend: agg.totalSpend }
+      return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive, createdAt: user.createdAt, status: user.isActive ? 'ACTIVE' : 'INACTIVE', orders: agg.orderCount, totalSpend: agg.totalSpend }
     }))
+  } catch (error) {
+    next(error)
+  }
+}
+
+const adminUserPayload = (user) => ({
+  id: user.id,
+  name: user.name,
+  email: user.email,
+  role: user.role,
+  isActive: user.isActive,
+  storeId: user.storeId,
+  createdAt: user.createdAt,
+  updatedAt: user.updatedAt,
+})
+
+const getAssignmentScope = async (role, storeId, brandId, fallbackStoreId) => {
+  const requestedStoreId = role === 'SUPER_ADMIN' && (storeId === undefined || storeId === null || storeId === '')
+    ? null
+    : Number(storeId || fallbackStoreId)
+
+  if (requestedStoreId !== null && (!Number.isInteger(requestedStoreId) || requestedStoreId < 1)) {
+    const error = new Error('Store ID must be a positive integer')
+    error.statusCode = 400
+    throw error
+  }
+
+  if (requestedStoreId !== null) {
+    const store = await prisma.store.findFirst({ where: { id: requestedStoreId, status: 'ACTIVE', tenant: { status: 'ACTIVE' } } })
+    if (!store) {
+      const error = new Error('Store not found')
+      error.statusCode = 404
+      throw error
+    }
+  }
+
+  const requestedBrandId = brandId === undefined || brandId === null || brandId === '' ? null : Number(brandId)
+  if (requestedBrandId !== null) {
+    if (!Number.isInteger(requestedBrandId) || requestedBrandId < 1) {
+      const error = new Error('Brand ID must be a positive integer')
+      error.statusCode = 400
+      throw error
+    }
+    const brand = await prisma.brand.findFirst({ where: { id: requestedBrandId, status: 'ACTIVE', ...(requestedStoreId === null ? {} : { storeId: requestedStoreId }) } })
+    if (!brand) {
+      const error = new Error('Brand does not belong to selected store')
+      error.statusCode = 400
+      throw error
+    }
+  }
+
+  return { storeId: requestedStoreId, brandId: requestedBrandId }
+}
+
+export const createAdminUser = async (req, res, next) => {
+  try {
+    const { name, email, password, role, storeId, brandId, isActive = true } = req.body || {}
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : ''
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      res.status(400)
+      throw new Error('A valid email is required')
+    }
+    if (typeof password !== 'string' || password.length < 8) {
+      res.status(400)
+      throw new Error('Password must be at least 8 characters')
+    }
+    if (!adminRoles.includes(role)) {
+      res.status(400)
+      throw new Error('Invalid admin role')
+    }
+    const scope = await getAssignmentScope(role, storeId, brandId, req.store.id)
+    const passwordHash = await bcrypt.hash(password, 10)
+    const user = await prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({ data: { name: name || '', email: normalizedEmail, password: passwordHash, role, isActive: Boolean(isActive), storeId: scope.storeId } })
+      await tx.adminAssignment.create({ data: { userId: created.id, role, storeId: scope.storeId, brandId: scope.brandId, isActive: Boolean(isActive) } })
+      return created
+    })
+    res.status(201).json(adminUserPayload(user))
   } catch (error) {
     next(error)
   }
@@ -582,13 +828,30 @@ export const getAdminUsers = async (req, res, next) => {
 export const updateAdminUser = async (req, res, next) => {
   try {
     const userId = Number(req.params.id)
-    const { role } = req.body || {}
+    const { role, storeId, brandId, isActive } = req.body || {}
     if (Number.isNaN(userId)) {
       res.status(400)
       throw new Error('Invalid user ID')
     }
-    const user = await prisma.user.update({ where: { id: userId }, data: { role } })
-    res.json({ id: user.id, name: user.name, email: user.email, role: user.role, createdAt: user.createdAt, status: 'ACTIVE' })
+    const existing = await prisma.user.findUnique({ where: { id: userId } })
+    if (!existing) {
+      res.status(404)
+      throw new Error('User not found')
+    }
+    const nextRole = role || existing.role
+    if (!adminRoles.includes(nextRole)) {
+      res.status(400)
+      throw new Error('Invalid admin role')
+    }
+    const scope = await getAssignmentScope(nextRole, storeId, brandId, existing.storeId || req.store.id)
+    const active = isActive === undefined ? existing.isActive : Boolean(isActive)
+    const user = await prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({ where: { id: existing.id }, data: { role: nextRole, isActive: active, storeId: scope.storeId } })
+      await tx.adminAssignment.deleteMany({ where: { userId: existing.id } })
+      await tx.adminAssignment.create({ data: { userId: existing.id, role: nextRole, storeId: scope.storeId, brandId: scope.brandId, isActive: active } })
+      return updated
+    })
+    res.json(adminUserPayload(user))
   } catch (error) {
     next(error)
   }
@@ -601,8 +864,13 @@ export const deleteAdminUser = async (req, res, next) => {
       res.status(400)
       throw new Error('Invalid user ID')
     }
-    await prisma.order.deleteMany({ where: { userId } })
-    await prisma.user.delete({ where: { id: userId } })
+    const user = await prisma.user.findFirst({ where: { id: userId, storeId: req.store.id } })
+    if (!user) {
+      res.status(404)
+      throw new Error('User not found')
+    }
+    await prisma.order.deleteMany({ where: { userId: user.id, storeId: req.store.id } })
+    await prisma.user.delete({ where: { id: user.id } })
     res.json({ message: 'User deleted successfully' })
   } catch (error) {
     next(error)
@@ -615,7 +883,7 @@ export const getAdminCoupons = async (req, res, next) => {
       // Prisma client doesn't have the Coupon model (client not regenerated or migration not applied)
       return res.json([])
     }
-    const coupons = await prisma.coupon.findMany({ orderBy: { createdAt: 'desc' } })
+    const coupons = await prisma.coupon.findMany({ where: storeScope(req), orderBy: { createdAt: 'desc' } })
     res.json(coupons.map((c) => ({ id: c.id, code: c.code, discountType: c.discountType, value: Number(c.value), active: c.active, usageLimit: c.usageLimit, usageCount: c.usageCount, createdAt: c.createdAt })))
   } catch (error) {
     next(error)
@@ -633,7 +901,7 @@ export const createAdminCoupon = async (req, res, next) => {
       res.status(400)
       throw new Error('Coupon code and value are required')
     }
-    const created = await prisma.coupon.create({ data: { code, discountType, value: Number(value), active: !!active, usageLimit: usageLimit !== undefined ? Number(usageLimit) : null } })
+    const created = await prisma.coupon.create({ data: { code: String(code).trim().toUpperCase(), discountType, value: Number(value), active: !!active, usageLimit: usageLimit !== undefined ? Number(usageLimit) : null, storeId: req.store.id } })
     res.status(201).json({ id: created.id, code: created.code, discountType: created.discountType, value: Number(created.value), active: created.active, usageLimit: created.usageLimit, usageCount: created.usageCount })
   } catch (error) {
     next(error)
@@ -652,7 +920,12 @@ export const updateAdminCoupon = async (req, res, next) => {
       throw new Error('Invalid coupon ID')
     }
     const data = { ...(req.body.code !== undefined ? { code: req.body.code } : {}), ...(req.body.discountType !== undefined ? { discountType: req.body.discountType } : {}), ...(req.body.value !== undefined ? { value: Number(req.body.value) } : {}), ...(req.body.active !== undefined ? { active: !!req.body.active } : {}), ...(req.body.usageLimit !== undefined ? { usageLimit: req.body.usageLimit === '' || req.body.usageLimit === null ? null : Number(req.body.usageLimit) } : {}) }
-    const updated = await prisma.coupon.update({ where: { id: couponId }, data })
+    const existing = await prisma.coupon.findFirst({ where: storeScope(req, { id: couponId }) })
+    if (!existing) {
+      res.status(404)
+      throw new Error('Coupon not found')
+    }
+    const updated = await prisma.coupon.update({ where: { id: existing.id }, data })
     res.json({ id: updated.id, code: updated.code, discountType: updated.discountType, value: Number(updated.value), active: updated.active, usageLimit: updated.usageLimit, usageCount: updated.usageCount })
   } catch (error) {
     next(error)
@@ -670,7 +943,12 @@ export const deleteAdminCoupon = async (req, res, next) => {
       res.status(400)
       throw new Error('Invalid coupon ID')
     }
-    await prisma.coupon.delete({ where: { id: couponId } })
+    const coupon = await prisma.coupon.findFirst({ where: storeScope(req, { id: couponId }) })
+    if (!coupon) {
+      res.status(404)
+      throw new Error('Coupon not found')
+    }
+    await prisma.coupon.delete({ where: { id: coupon.id } })
     res.json({ message: 'Coupon deleted successfully' })
   } catch (error) {
     next(error)
@@ -679,7 +957,21 @@ export const deleteAdminCoupon = async (req, res, next) => {
 
 export const getAdminReviews = async (req, res, next) => {
   try {
-    res.json(reviewStore)
+    const reviews = await prisma.productReview.findMany({
+      where: { product: storeScope(req) },
+      include: { product: true, user: true },
+      orderBy: { createdAt: 'desc' },
+    })
+    res.json(reviews.map((review) => ({
+      id: review.id,
+      product: review.product.name,
+      customer: review.user?.name || review.user?.email || 'Anonymous customer',
+      rating: review.rating,
+      comment: review.comment,
+      status: review.status,
+      createdAt: review.createdAt,
+      updatedAt: review.updatedAt,
+    })))
   } catch (error) {
     next(error)
   }
@@ -689,13 +981,16 @@ export const updateAdminReview = async (req, res, next) => {
   try {
     const reviewId = Number(req.params.id)
     const status = req.path.includes('/approve') ? 'APPROVED' : 'REJECTED'
-    const index = reviewStore.findIndex((review) => review.id === reviewId)
-    if (index === -1) {
+    const review = await prisma.productReview.findFirst({
+      where: { id: reviewId, product: storeScope(req) },
+      include: { product: true, user: true },
+    })
+    if (!review) {
       res.status(404)
       throw new Error('Review not found')
     }
-    reviewStore[index] = { ...reviewStore[index], status }
-    res.json(reviewStore[index])
+    const updated = await prisma.productReview.update({ where: { id: review.id }, data: { status } })
+    res.json({ ...updated, product: review.product.name, customer: review.user?.name || review.user?.email || 'Anonymous customer' })
   } catch (error) {
     next(error)
   }
@@ -704,12 +999,12 @@ export const updateAdminReview = async (req, res, next) => {
 export const deleteAdminReview = async (req, res, next) => {
   try {
     const reviewId = Number(req.params.id)
-    const index = reviewStore.findIndex((review) => review.id === reviewId)
-    if (index === -1) {
+    const review = await prisma.productReview.findFirst({ where: { id: reviewId, product: storeScope(req) } })
+    if (!review) {
       res.status(404)
       throw new Error('Review not found')
     }
-    reviewStore.splice(index, 1)
+    await prisma.productReview.delete({ where: { id: review.id } })
     res.json({ message: 'Review deleted successfully' })
   } catch (error) {
     next(error)
@@ -731,7 +1026,7 @@ const formatInventoryItem = (product, threshold) => ({
   availableStock: Number(product.countInStock || 0),
   stockStatus: getInventoryStatus(Number(product.countInStock || 0), threshold),
   lastUpdated: product.updatedAt || product.createdAt,
-  image: Array.isArray(product.images) && product.images[0] ? product.images[0] : null,
+  image: parseStringArray(product.images)[0] || null,
   category: product.category ? { id: product.category.id, name: product.category.name } : null,
 })
 
@@ -739,46 +1034,14 @@ export const getAdminInventory = async (req, res, next) => {
   try {
     const threshold = Number.isFinite(Number(req.query.lowStockThreshold)) ? Number(req.query.lowStockThreshold) : 10
     const products = await prisma.product.findMany({
+      where: storeScope(req),
       include: { category: true },
       orderBy: { updatedAt: 'desc' },
     })
 
     console.log('[AdminInventory] GET /api/admin/inventory fetched products:', products.length)
 
-    const inventoryProducts = products.length
-      ? products
-      : [
-          {
-            id: 0,
-            name: 'Demo Suit',
-            slug: 'demo-suit',
-            countInStock: 12,
-            price: 7999,
-            updatedAt: new Date().toISOString(),
-            images: [],
-            category: { id: 0, name: 'Suits' },
-          },
-          {
-            id: 1,
-            name: 'Demo Blazer',
-            slug: 'demo-blazer',
-            countInStock: 7,
-            price: 9999,
-            updatedAt: new Date().toISOString(),
-            images: [],
-            category: { id: 0, name: 'Blazers' },
-          },
-          {
-            id: 2,
-            name: 'Demo Shirt',
-            slug: 'demo-shirt',
-            countInStock: 18,
-            price: 2599,
-            updatedAt: new Date().toISOString(),
-            images: [],
-            category: { id: 0, name: 'Shirts' },
-          },
-        ]
+    const inventoryProducts = products
 
     const items = inventoryProducts.map((product) => formatInventoryItem(product, threshold))
     const totalStock = inventoryProducts.reduce((sum, product) => sum + Number(product.countInStock || 0), 0)
@@ -831,7 +1094,7 @@ export const updateAdminInventory = async (req, res, next) => {
     }
 
     const { adjustment, mode, stock } = req.body || {}
-    const currentProduct = await prisma.product.findUnique({ where: { id: productId } })
+    const currentProduct = await prisma.product.findFirst({ where: storeScope(req, { id: productId }) })
     if (!currentProduct) {
       res.status(404)
       throw new Error('Product not found')
@@ -878,7 +1141,12 @@ export const getAdminInventoryHistory = async (req, res, next) => {
       // StockHistory model not available in Prisma client yet
       return res.json([])
     }
-    const history = await prisma.stockHistory.findMany({ where: { productId }, orderBy: { createdAt: 'desc' } })
+    const scopedProduct = await prisma.product.findFirst({ where: storeScope(req, { id: productId }) })
+    if (!scopedProduct) {
+      res.status(404)
+      throw new Error('Product not found')
+    }
+    const history = await prisma.stockHistory.findMany({ where: { productId: scopedProduct.id }, orderBy: { createdAt: 'desc' } })
     res.json(history.map((h) => ({ id: h.id, productId: h.productId, change: h.change, mode: h.mode, reason: h.reason, adminId: h.adminId, createdAt: h.createdAt })))
   } catch (error) {
     next(error)
@@ -892,7 +1160,15 @@ export const getAdminOrderById = async (req, res, next) => {
       res.status(400)
       throw new Error('Invalid order ID')
     }
-    const order = await prisma.order.findUnique({ where: { id: orderId }, include: { user: true, items: { include: { product: true } } } })
+    const order = await prisma.order.findFirst({
+      where: storeScope(req, { id: orderId }),
+      include: {
+        user: true,
+        store: true,
+        items: { include: { product: true, variant: true } },
+        statusHistory: { include: { changedBy: true }, orderBy: { createdAt: 'asc' } },
+      },
+    })
     if (!order) {
       res.status(404)
       throw new Error('Order not found')
@@ -908,6 +1184,7 @@ export const getLowStockInventory = async (req, res, next) => {
     // Low-stock alerts at variant level: quantityOnHand <= reorderThreshold
     const thresholdQuery = req.query.lowStockThreshold
     const variants = await prisma.productVariant.findMany({
+      where: { product: storeScope(req) },
       include: { product: true },
       orderBy: { quantityOnHand: 'asc' },
     })
@@ -949,7 +1226,7 @@ export const getVariantInventoryList = async (req, res, next) => {
     }
 
     if (productId) {
-      const product = await prisma.product.findUnique({ where: { id: productId }, include: { variants: true } })
+      const product = await prisma.product.findFirst({ where: storeScope(req, { id: productId }), include: { variants: true } })
       if (!product) {
         res.status(404)
         throw new Error('Product not found')
@@ -957,7 +1234,7 @@ export const getVariantInventoryList = async (req, res, next) => {
       return res.json({ id: product.id, name: product.name, variants: product.variants.map((v) => ({ id: v.id, sku: v.sku, size: v.size, color: v.color, quantityOnHand: v.quantityOnHand, reorderThreshold: v.reorderThreshold, status: v.status })) })
     }
 
-    const products = await prisma.product.findMany({ include: { variants: true }, orderBy: { createdAt: 'desc' } })
+    const products = await prisma.product.findMany({ where: storeScope(req), include: { variants: true }, orderBy: { createdAt: 'desc' } })
     const payload = products.map((p) => ({ id: p.id, name: p.name, variants: p.variants.map((v) => ({ id: v.id, sku: v.sku, size: v.size, color: v.color, quantityOnHand: v.quantityOnHand, reorderThreshold: v.reorderThreshold, status: v.status })) }))
     res.json(payload)
   } catch (error) {
@@ -968,7 +1245,7 @@ export const getVariantInventoryList = async (req, res, next) => {
 export const getRecentOrders = async (req, res, next) => {
   try {
     const limit = Math.min(100, Math.max(1, Number(req.query.limit || 20)))
-    const orders = await prisma.order.findMany({ take: limit, orderBy: { createdAt: 'desc' }, include: { user: true } })
+    const orders = await prisma.order.findMany({ where: storeScope(req), take: limit, orderBy: { createdAt: 'desc' }, include: { user: true } })
     res.json(orders.map((o) => ({ id: o.id, user: o.user ? { id: o.user.id, name: o.user.name, email: o.user.email } : null, totalPrice: formatPrice(o.totalPrice), currency: o.currency, status: o.status, createdAt: o.createdAt })))
   } catch (error) {
     next(error)
@@ -982,7 +1259,12 @@ export const getOrderStatusTimeline = async (req, res, next) => {
       res.status(400)
       throw new Error('Invalid order ID')
     }
-    const history = await prisma.orderStatusHistory.findMany({ where: { orderId }, include: { changedBy: true }, orderBy: { createdAt: 'asc' } })
+    const order = await prisma.order.findFirst({ where: storeScope(req, { id: orderId }) })
+    if (!order) {
+      res.status(404)
+      throw new Error('Order not found')
+    }
+    const history = await prisma.orderStatusHistory.findMany({ where: { orderId: order.id }, include: { changedBy: true }, orderBy: { createdAt: 'asc' } })
     res.json(history.map((h) => ({ id: h.id, status: h.status, note: h.note || null, changedBy: h.changedBy ? { id: h.changedBy.id, name: h.changedBy.name } : null, createdAt: h.createdAt })))
   } catch (error) {
     next(error)
@@ -1089,21 +1371,50 @@ export const getAdminAnalytics = async (req, res, next) => {
     const { from: previousFrom, to: previousTo } = getComparableRange(from, to)
     const mode = getPeriodMode(from, to)
 
+    const rawBrandId = req.query?.brandId
+    let selectedBrandId = null
+    if (rawBrandId !== undefined && rawBrandId !== null && String(rawBrandId).trim() !== '' && String(rawBrandId).trim().toLowerCase() !== 'all') {
+      const parsedBrandId = Number(rawBrandId)
+      if (!Number.isInteger(parsedBrandId) || parsedBrandId < 1) {
+        res.status(400)
+        throw new Error('Invalid brand ID')
+      }
+
+      const brandWhere = {
+        id: parsedBrandId,
+        status: 'ACTIVE',
+        ...(req.store ? { storeId: req.store.id } : { storeId: { in: req.childStoreIds || [] } }),
+      }
+      const brand = await prisma.brand.findFirst({ where: brandWhere })
+
+      if (!brand) {
+        res.status(404)
+        throw new Error('Brand not found in selected store')
+      }
+
+      selectedBrandId = brand.id
+    }
+
+    const productScope = selectedBrandId ? storeScope(req, { brandId: selectedBrandId }) : storeScope(req)
+    const brandOrderScope = selectedBrandId
+      ? { items: { some: { product: { brandId: selectedBrandId } } } }
+      : {}
+
     const [products, currentOrders, previousOrders, customers, inventoryValue, allProducts, allOrders] = await Promise.all([
-      prisma.product.findMany({ include: { category: true } }),
+      prisma.product.findMany({ where: productScope, include: { category: true } }),
       prisma.order.findMany({
-        where: { createdAt: { gte: from, lte: to } },
+        where: storeScope(req, { ...brandOrderScope, createdAt: { gte: from, lte: to } }),
         include: { user: true, items: { include: { product: true } } },
         orderBy: { createdAt: 'desc' },
       }),
       prisma.order.findMany({
-        where: { createdAt: { gte: previousFrom, lte: previousTo } },
+        where: storeScope(req, { ...brandOrderScope, createdAt: { gte: previousFrom, lte: previousTo } }),
         include: { user: true, items: { include: { product: true } } },
       }),
-      prisma.user.count({ where: { role: 'CUSTOMER' } }),
-      prisma.product.findMany({ select: { countInStock: true, price: true } }),
-      prisma.product.findMany({ include: { category: true }, orderBy: { countInStock: 'asc' } }),
-      prisma.order.findMany({ include: { user: true, items: { include: { product: true } } }, orderBy: { createdAt: 'desc' } }),
+      prisma.user.count({ where: storeScope(req, { role: 'CUSTOMER' }) }),
+      prisma.product.findMany({ where: productScope, select: { countInStock: true, price: true } }),
+      prisma.product.findMany({ where: productScope, include: { category: true }, orderBy: { countInStock: 'asc' } }),
+      prisma.order.findMany({ where: storeScope(req, brandOrderScope), include: { user: true, items: { include: { product: true } } }, orderBy: { createdAt: 'desc' } }),
     ])
 
     const totalRevenue = currentOrders.reduce((sum, order) => sum + formatPrice(order.totalPrice), 0)
@@ -1226,6 +1537,10 @@ export const getAdminAnalytics = async (req, res, next) => {
       map.set(categoryName, existing + Number(product.countInStock || 0))
       return map
     }, new Map())
+
+    const inventoryDistribution = Array.from(inventoryDistributionMap.entries())
+      .map(([name, stock]) => ({ name, stock }))
+      .sort((a, b) => b.stock - a.stock)
 
     const inventoryProducts = allProducts.length
       ? allProducts
@@ -1366,12 +1681,12 @@ export const getSalesReports = async (req, res, next) => {
     }
 
     const orders = await prisma.order.findMany({
-      where: {
+      where: storeScope(req, {
         createdAt: {
           gte: from,
           lte: now,
         },
-      },
+      }),
       include: {
         user: true,
         items: { include: { product: true } },
@@ -1414,7 +1729,7 @@ export const exportAdminReport = async (req, res, next) => {
     const { format = 'csv' } = req.query || {}
 
     if (resource === 'products') {
-      const products = await prisma.product.findMany({ include: { category: true }, orderBy: { createdAt: 'desc' } })
+      const products = await prisma.product.findMany({ where: storeScope(req), include: { category: true }, orderBy: { createdAt: 'desc' } })
       const rows = products.map((product) => ({ id: product.id, name: product.name, category: product.category?.name || 'Uncategorized', price: formatPrice(product.price), stock: product.countInStock }))
       const headers = ['id', 'name', 'category', 'price', 'stock']
       const payload = format === 'xlsx' ? buildXlsx(headers, rows) : format === 'pdf' ? buildPdf('Products report', headers, rows) : Buffer.from(buildCsv(headers, rows), 'utf8')
@@ -1424,7 +1739,7 @@ export const exportAdminReport = async (req, res, next) => {
     }
 
     if (resource === 'inventory') {
-      const products = await prisma.product.findMany({ include: { category: true }, orderBy: { createdAt: 'desc' } })
+      const products = await prisma.product.findMany({ where: storeScope(req), include: { category: true }, orderBy: { createdAt: 'desc' } })
       const rows = products.map((product) => ({ id: product.id, name: product.name, sku: product.slug, category: product.category?.name || 'Uncategorized', stock: product.countInStock, value: formatPrice(product.price) * Number(product.countInStock || 0) }))
       const headers = ['id', 'name', 'sku', 'category', 'stock', 'value']
       const payload = format === 'xlsx' ? buildXlsx(headers, rows) : format === 'pdf' ? buildPdf('Inventory report', headers, rows) : Buffer.from(buildCsv(headers, rows), 'utf8')
@@ -1434,7 +1749,7 @@ export const exportAdminReport = async (req, res, next) => {
     }
 
     if (resource === 'orders') {
-      const orders = await prisma.order.findMany({ include: { user: true, items: { include: { product: true } } }, orderBy: { createdAt: 'desc' } })
+      const orders = await prisma.order.findMany({ where: storeScope(req), include: { user: true, items: { include: { product: true } } }, orderBy: { createdAt: 'desc' } })
       const rows = orders.map((order) => ({ id: order.id, customer: order.user?.name || order.user?.email || 'Guest', status: order.status, revenue: formatPrice(order.totalPrice), items: order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0) }))
       const headers = ['id', 'customer', 'status', 'revenue', 'items']
       const payload = format === 'xlsx' ? buildXlsx(headers, rows) : format === 'pdf' ? buildPdf('Orders report', headers, rows) : Buffer.from(buildCsv(headers, rows), 'utf8')
@@ -1444,7 +1759,7 @@ export const exportAdminReport = async (req, res, next) => {
     }
 
     if (resource === 'customers') {
-      const users = await prisma.user.findMany({ where: { role: 'CUSTOMER' }, orderBy: { createdAt: 'desc' } })
+      const users = await prisma.user.findMany({ where: storeScope(req, { role: 'CUSTOMER' }), orderBy: { createdAt: 'desc' } })
       const rows = users.map((user) => ({ id: user.id, name: user.name || 'Customer', email: user.email, createdAt: user.createdAt }))
       const headers = ['id', 'name', 'email', 'createdAt']
       const payload = format === 'xlsx' ? buildXlsx(headers, rows) : format === 'pdf' ? buildPdf('Customers report', headers, rows) : Buffer.from(buildCsv(headers, rows), 'utf8')
@@ -1454,7 +1769,7 @@ export const exportAdminReport = async (req, res, next) => {
     }
 
     if (resource === 'sales-report') {
-      const orders = await prisma.order.findMany({ include: { user: true }, orderBy: { createdAt: 'desc' } })
+      const orders = await prisma.order.findMany({ where: storeScope(req), include: { user: true }, orderBy: { createdAt: 'desc' } })
       const rows = orders.map((order) => ({ id: order.id, customer: order.user?.name || order.user?.email || 'Guest', revenue: formatPrice(order.totalPrice), createdAt: order.createdAt, status: order.status }))
       const headers = ['id', 'customer', 'revenue', 'status', 'createdAt']
       const payload = format === 'xlsx' ? buildXlsx(headers, rows) : format === 'pdf' ? buildPdf('Sales report', headers, rows) : Buffer.from(buildCsv(headers, rows), 'utf8')
@@ -1466,7 +1781,7 @@ export const exportAdminReport = async (req, res, next) => {
     if (resource === 'analytics') {
       const { from, to } = getDateRange(req.query.range || '30d', req.query.startDate, req.query.endDate)
       const orders = await prisma.order.findMany({
-        where: { createdAt: { gte: from, lte: to } },
+        where: storeScope(req, { createdAt: { gte: from, lte: to } }),
         include: { user: true, items: { include: { product: true } } },
         orderBy: { createdAt: 'desc' },
       })

@@ -2,6 +2,7 @@ import 'dotenv/config'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import prisma from '../lib/prisma.js'
+import { ADMIN_ROLES, resolveAdminContext } from '../middleware/adminContext.js'
 
 const getJwtSecret = () => {
   const secret = process.env.JWT_SECRET?.trim()
@@ -17,7 +18,7 @@ const getJwtExpiresIn = () => process.env.JWT_EXPIRES_IN || '7d'
 const createToken = (user) => {
   const secret = getJwtSecret()
   if (!secret) {
-    throw new Error('JWT_SECRET is missing or invalid')
+    throw new Error('Authentication failed')
   }
 
   try {
@@ -25,8 +26,7 @@ const createToken = (user) => {
       expiresIn: getJwtExpiresIn(),
     })
   } catch (error) {
-    console.error('[Auth] JWT generation error:', error)
-    throw new Error(`Token generation failed: ${error instanceof Error ? error.message : String(error)}`)
+    throw new Error('Authentication failed')
   }
 }
 
@@ -38,6 +38,8 @@ const sanitizeUser = (user) => ({
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
 })
+
+const registrationAcknowledgement = { message: 'If the details are eligible, the account request was processed.' }
 
 const setAuthCookie = (res, token) => {
   const isProduction = process.env.NODE_ENV === 'production'
@@ -51,68 +53,63 @@ const setAuthCookie = (res, token) => {
 
 export const registerUser = async (req, res, next) => {
   try {
+    if (req.contextType === 'PARENT') {
+      res.status(409)
+      throw new Error('Registration failed')
+    }
     const { name, email, password } = req.body || {}
 
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : ''
 
     if (!normalizedEmail || !normalizedEmail.includes('@')) {
       res.status(400)
-      throw new Error('A valid email is required')
+      throw new Error('Registration failed')
     }
 
     if (typeof password !== 'string' || password.length < 8) {
       res.status(400)
-      throw new Error('Password must be at least 8 characters')
+      throw new Error('Registration failed')
     }
+
+    const hashedPassword = await bcrypt.hash(password, 10)
 
     let existing
     try {
       existing = await prisma.user.findUnique({ where: { email: normalizedEmail } })
     } catch (dbErr) {
-      console.error('[Auth] Register Prisma error:', dbErr)
       res.status(500)
-      throw new Error(`Database error: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`)
+      throw new Error('Registration failed')
     }
 
     if (existing) {
-      res.status(409)
-      throw new Error('Email is already registered')
+      return res.status(202).json(registrationAcknowledgement)
     }
 
     let user
     try {
-      const hashedPassword = await bcrypt.hash(password, 10)
       user = await prisma.user.create({
         data: {
           name,
           email: normalizedEmail,
           password: hashedPassword,
+          storeId: req.store.id,
         },
       })
     } catch (dbErr) {
-      console.error('[Auth] Register user creation error:', dbErr)
+      if (dbErr?.code === 'P2002') {
+        return res.status(202).json(registrationAcknowledgement)
+      }
       res.status(500)
-      throw new Error(`Database error: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`)
+      throw new Error('Registration failed')
     }
 
-    let token
-    try {
-      token = createToken(user)
-    } catch (tokenErr) {
-      console.error('[Auth] Register JWT creation failed:', tokenErr)
-      res.status(500)
-      throw new Error(`Token generation failed: ${tokenErr instanceof Error ? tokenErr.message : String(tokenErr)}`)
-    }
-
-    setAuthCookie(res, token)
-    res.status(201).json({ user: sanitizeUser(user), token, message: 'Account created successfully' })
+    res.status(202).json(registrationAcknowledgement)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error'
     if (!res.headersSent) {
       const statusCode = res.statusCode >= 400 ? res.statusCode : 500
       res.status(statusCode).json({ message })
     }
-    console.error('[Auth] Register Error:', error)
   }
 }
 
@@ -121,79 +118,79 @@ export const loginUser = async (req, res, next) => {
     const { email, password } = req.body || {}
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : ''
 
-    console.log('[Auth] Login attempt', {
-      email: normalizedEmail,
-      hasPassword: Boolean(password),
-      bodyKeys: Object.keys(req.body || {}),
-    })
-
     if (!normalizedEmail || typeof normalizedEmail !== 'string' || !normalizedEmail.includes('@')) {
       res.status(400)
-      throw new Error('A valid email is required')
+      throw new Error('Authentication failed')
     }
 
     if (typeof password !== 'string' || password.trim().length < 1) {
       res.status(400)
-      throw new Error('Password is required')
+      throw new Error('Authentication failed')
     }
 
     let user
     try {
       user = await prisma.user.findUnique({ where: { email: normalizedEmail } })
-      console.log('[Auth] Prisma user lookup result', { email: normalizedEmail, found: Boolean(user) })
     } catch (dbErr) {
-      console.error('[Auth] Login Prisma error:', dbErr)
       res.status(500)
-      throw new Error(`Database error: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`)
+      throw new Error('Authentication failed')
     }
 
     if (!user) {
-      res.status(404)
-      console.warn('[Auth] Login failed - user not found', { email: normalizedEmail })
-      throw new Error('User not found')
+      res.status(401)
+      throw new Error('Authentication failed')
+    }
+
+    if (!user.isActive) {
+      res.status(401)
+      throw new Error('Authentication failed')
+    }
+
+    if (ADMIN_ROLES.has(user.role)) {
+      const adminContext = await resolveAdminContext(req, user)
+      if (!adminContext) {
+        res.status(401)
+        throw new Error('Authentication failed')
+      }
+    } else if (req.contextType === 'PARENT' || !req.store || user.storeId !== req.store.id) {
+      res.status(401)
+      throw new Error('Authentication failed')
     }
 
     if (!user.password) {
       res.status(500)
-      console.error('[Auth] Login failed - stored password is missing', { email: normalizedEmail })
-      throw new Error('Stored password is missing')
+      throw new Error('Authentication failed')
     }
 
     let matched = false
     try {
       matched = await bcrypt.compare(password, user.password)
     } catch (compareError) {
-      console.error('[Auth] bcrypt.compare error:', compareError)
       res.status(500)
-      throw new Error('Password verification failed')
+      throw new Error('Authentication failed')
     }
 
-    console.log('[Auth] Password comparison result', { email: normalizedEmail, matched })
     if (!matched) {
       res.status(401)
-      console.warn('[Auth] Login failed - invalid password', { email: normalizedEmail })
-      throw new Error('Invalid credentials')
+      throw new Error('Authentication failed')
     }
 
     let token
     try {
       token = createToken(user)
     } catch (tokenErr) {
-      console.error('[Auth] JWT creation failed during login:', tokenErr)
       res.status(500)
-      throw new Error(`Token generation failed: ${tokenErr instanceof Error ? tokenErr.message : String(tokenErr)}`)
+      throw new Error('Authentication failed')
     }
 
     setAuthCookie(res, token)
-    console.log('[Auth] Login success', { email: normalizedEmail, userId: user.id })
-    res.status(200).json({ user: sanitizeUser(user), token, message: 'Login successful' })
+    res.status(200).json({ user: sanitizeUser(user), message: 'Login successful' })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error'
     if (!res.headersSent) {
       const statusCode = res.statusCode >= 400 ? res.statusCode : 500
       res.status(statusCode).json({ message })
     }
-    console.error('[Auth] Login Error:', error)
   }
 }
 

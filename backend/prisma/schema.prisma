@@ -6,36 +6,78 @@ datasource db {
   provider = "postgresql"
 }
 
+model Tenant {
+  id        Int      @id @default(autoincrement())
+  name      String
+  slug      String   @unique
+  status    String   @default("ACTIVE")
+  stores    Store[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Store {
+  id         Int        @id @default(autoincrement())
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  tenantId   Int
+  name       String
+  slug       String     @unique
+  status     String     @default("ACTIVE")
+  users      User[]
+  brands     Brand[]
+  categories Category[]
+  products   Product[]
+  carts      Cart[]
+  wishlists  Wishlist[]
+  orders     Order[]
+  payments   Payment[]
+  coupons    Coupon[]
+  adminAssignments AdminAssignment[]
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  @@index([tenantId])
+}
+
 model User {
   id             Int                  @id @default(autoincrement())
   email          String               @unique
   name           String?
   password       String
   role           String               @default("CUSTOMER")
+  isActive       Boolean              @default(true)
   createdAt      DateTime             @default(now())
   updatedAt      DateTime             @updatedAt
   orders         Order[]
+  payments       Payment[]
   addresses      Address[]
   auditLogs      AuditLog[]           @relation("ActorAuditLogs")
   statusChanges  OrderStatusHistory[]
   productReviews ProductReview[]
+  store          Store                @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  storeId        Int
+  carts          Cart[]
+  wishlists      Wishlist[]
+  adminAssignments AdminAssignment[]
+
+  @@index([storeId])
 }
 
 model Address {
-  id          Int      @id @default(autoincrement())
-  user        User     @relation(fields: [userId], references: [id])
-  userId      Int
-  label       String
-  line1       String
-  line2       String?
-  city        String
-  state       String
-  postalCode  String
-  country     String
-  phone       String?
-  isDefault   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         Int      @id @default(autoincrement())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     Int
+  label      String
+  line1      String
+  line2      String?
+  city       String
+  state      String
+  postalCode String
+  country    String
+  phone      String?
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 model Category {
@@ -44,19 +86,31 @@ model Category {
   slug        String    @unique
   description String?
   products    Product[]
+  store       Store     @relation(fields: [storeId], references: [id])
+  storeId     Int
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
+  @@index([storeId])
+  @@index([storeId, slug])
 }
 
 model Brand {
-  id          Int      @id @default(autoincrement())
-  name        String   @unique
-  slug        String   @unique
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
+  slug        String    @unique
   description String?
   logo        String?
-  status      String   @default("ACTIVE")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  status      String    @default("ACTIVE")
+  store       Store     @relation(fields: [storeId], references: [id])
+  storeId     Int
+  products    Product[]
+  adminAssignments AdminAssignment[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([storeId])
+  @@index([storeId, slug])
 }
 
 model Warehouse {
@@ -76,6 +130,8 @@ model Product {
   fullDescription  String?
   description      String?
   brand            String?
+  brandRelation    Brand?           @relation(fields: [brandId], references: [id])
+  brandId          Int?
   price            Float
   discountPercent  Float            @default(0)
   tax              Float            @default(0)
@@ -84,6 +140,7 @@ model Product {
   availability     String           @default("IN_STOCK")
   warehouse        String           @default("Main")
   images           String?
+  hoverImage       String?
   collection       String?
   tags             String?
   size             String?
@@ -95,25 +152,33 @@ model Product {
   status           String           @default("ACTIVE")
   category         Category?        @relation(fields: [categoryId], references: [id])
   categoryId       Int?
+  store            Store            @relation(fields: [storeId], references: [id])
+  storeId          Int
   imagesList       ProductImage[]
   variants         ProductVariant[]
   reviews          ProductReview[]
   stockMovements   StockHistory[]
   orderItems       OrderItem[]
+  wishlistItems    WishlistItem[]
+  cartItems        CartItem[]
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
+
+  @@index([storeId])
+  @@index([storeId, categoryId])
+  @@index([storeId, brandId])
 }
 
 model ProductImage {
-  id         Int      @id @default(autoincrement())
-  product    Product  @relation(fields: [productId], references: [id])
-  productId  Int
-  url        String
-  altText    String?
-  sortOrder  Int      @default(0)
-  isPrimary  Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        Int      @id @default(autoincrement())
+  product   Product  @relation(fields: [productId], references: [id])
+  productId Int
+  url       String
+  altText   String?
+  sortOrder Int      @default(0)
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([productId])
 }
@@ -130,6 +195,8 @@ model ProductVariant {
   reorderThreshold Int            @default(5)
   status           String         @default("ACTIVE")
   stockMovements   StockHistory[]
+  orderItems       OrderItem[]
+  cartItems        CartItem[]
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
@@ -160,31 +227,115 @@ model StockHistory {
 }
 
 model Order {
-  id            Int                  @id @default(autoincrement())
-  user          User                 @relation(fields: [userId], references: [id])
-  userId        Int
-  status        String               @default("PLACED")
-  totalPrice    Float
-  currency      String               @default("INR")
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
-  items         OrderItem[]
-  statusHistory OrderStatusHistory[]
+  id              Int                  @id @default(autoincrement())
+  user            User                 @relation(fields: [userId], references: [id])
+  userId          Int
+  store           Store                @relation(fields: [storeId], references: [id])
+  storeId         Int
+  status          String               @default("PLACED")
+  totalPrice      Float
+  currency        String               @default("INR")
+  shippingAddress String?
+  billingAddress  String?
+  idempotencyKey   String?
+  requestFingerprint String?
+  requestContextFingerprint String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  items           OrderItem[]
+  statusHistory   OrderStatusHistory[]
+  payments        Payment[]
+
+  @@index([userId])
+  @@index([storeId])
+  @@index([storeId, userId])
+  @@unique([userId, storeId, idempotencyKey])
+}
+
+enum PaymentProvider {
+  RAZORPAY
+}
+
+enum PaymentStatus {
+  CREATED
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum PaymentWebhookEventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+model Payment {
+  id                 Int             @id @default(autoincrement())
+  order              Order?          @relation(fields: [orderId], references: [id])
+  orderId            Int?
+  user               User            @relation(fields: [userId], references: [id])
+  userId             Int
+  store              Store           @relation(fields: [storeId], references: [id])
+  storeId            Int
+  provider           PaymentProvider @default(RAZORPAY)
+  providerOrderId    String?         @unique
+  providerPaymentId  String?         @unique
+  providerSignature  String?
+  idempotencyKey     String?
+  amount             Float
+  currency           String          @default("INR")
+  status             PaymentStatus   @default(CREATED)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  webhookEvents      PaymentWebhookEvent[]
+
+  @@index([userId, storeId])
+  @@index([orderId])
+  @@index([idempotencyKey])
+  @@unique([userId, storeId, idempotencyKey])
+}
+
+model PaymentWebhookEvent {
+  id                  Int                       @id @default(autoincrement())
+  provider            PaymentProvider           @default(RAZORPAY)
+  providerEventId     String
+  eventType           String
+  payment             Payment?                  @relation(fields: [paymentId], references: [id])
+  paymentId           Int?
+  status              PaymentWebhookEventStatus @default(RECEIVED)
+  processingLeaseToken String?                  @unique
+  receivedAt          DateTime                  @default(now())
+  processingStartedAt DateTime?
+  processedAt         DateTime?
+  failedAt            DateTime?
+  lastError           String?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+
+  @@unique([provider, providerEventId])
+  @@index([status, processingStartedAt])
+  @@index([paymentId])
 }
 
 model OrderItem {
-  id         Int     @id @default(autoincrement())
-  order      Order   @relation(fields: [orderId], references: [id])
-  orderId    Int
-  product    Product @relation(fields: [productId], references: [id])
-  productId  Int
-  quantity   Int     @default(1)
-  price      Float
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        Int             @id @default(autoincrement())
+  order     Order           @relation(fields: [orderId], references: [id])
+  orderId   Int
+  product   Product         @relation(fields: [productId], references: [id])
+  productId Int
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  variantId Int?
+  quantity  Int             @default(1)
+  price     Float
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
 
   @@index([orderId])
   @@index([productId])
+  @@index([variantId])
 }
 
 model OrderStatusHistory {
@@ -200,17 +351,93 @@ model OrderStatusHistory {
   @@index([orderId])
 }
 
+model Cart {
+  id        Int        @id @default(autoincrement())
+  user      User       @relation(fields: [userId], references: [id])
+  userId    Int
+  store     Store      @relation(fields: [storeId], references: [id])
+  storeId   Int
+  items     CartItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@unique([userId, storeId])
+  @@index([storeId])
+}
+
+model CartItem {
+  id        Int             @id @default(autoincrement())
+  cart      Cart            @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  cartId    Int
+  product   Product         @relation(fields: [productId], references: [id])
+  productId Int
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  variantId Int?
+  quantity  Int             @default(1)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([cartId, productId, variantId])
+  @@index([productId])
+}
+
+model Wishlist {
+  id        Int            @id @default(autoincrement())
+  user      User           @relation(fields: [userId], references: [id])
+  userId    Int
+  store     Store          @relation(fields: [storeId], references: [id])
+  storeId   Int
+  items     WishlistItem[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@unique([userId, storeId])
+  @@index([storeId])
+}
+
+model WishlistItem {
+  id         Int      @id @default(autoincrement())
+  wishlist   Wishlist @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
+  wishlistId Int
+  product    Product  @relation(fields: [productId], references: [id])
+  productId  Int
+  createdAt  DateTime @default(now())
+
+  @@unique([wishlistId, productId])
+  @@index([productId])
+}
+
+model Coupon {
+  id            Int       @id @default(autoincrement())
+  code          String
+  discountType  String
+  value         Float
+  active        Boolean   @default(true)
+  usageLimit    Int?
+  usageCount    Int       @default(0)
+  minOrderValue Float?
+  startsAt      DateTime?
+  endsAt        DateTime?
+  store         Store     @relation(fields: [storeId], references: [id])
+  storeId       Int
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([storeId, code])
+  @@index([storeId])
+}
+
 model ProductReview {
-  id          Int      @id @default(autoincrement())
-  product     Product  @relation(fields: [productId], references: [id])
-  productId   Int
-  user        User?    @relation(fields: [userId], references: [id])
-  userId      Int?
-  rating      Int
-  comment     String
-  status      String   @default("PENDING")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        Int      @id @default(autoincrement())
+  product   Product  @relation(fields: [productId], references: [id])
+  productId Int
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    Int?
+  rating    Int
+  comment   String
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([productId])
   @@index([userId])
@@ -228,4 +455,23 @@ model AuditLog {
   afterValue  String?
   metadata    String?
   createdAt   DateTime @default(now())
+}
+
+model AdminAssignment {
+  id        Int      @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  store     Store?   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  storeId   Int?
+  brand     Brand?   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandId   Int?
+  role      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, role, storeId, brandId])
+  @@index([userId, isActive])
+  @@index([storeId, role, isActive])
+  @@index([brandId, role, isActive])
 }
