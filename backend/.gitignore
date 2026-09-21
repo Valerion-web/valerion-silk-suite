@@ -22,3 +22,6 @@ test-*.mjs
 verify-*.mjs
 
 /generated/prisma
+
+# PostgreSQL database dumps
+*.dump
