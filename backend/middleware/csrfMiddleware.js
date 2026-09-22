@@ -16,6 +16,7 @@ const getCookie = (req, name) => {
 
 const setCsrfCookie = (res, token) => {
   res.cookie(CSRF_COOKIE_NAME, token, {
+    ...(isProduction() ? { domain: '.haston.in' } : {}),
     httpOnly: false,
     secure: isProduction(),
     sameSite: isProduction() ? 'none' : 'lax',
@@ -23,12 +24,17 @@ const setCsrfCookie = (res, token) => {
   })
 }
 
+const clearLegacyCsrfCookie = (res) => {
+  if (isProduction()) res.clearCookie(CSRF_COOKIE_NAME, { path: '/' })
+}
+
 const csrfMiddleware = (req, res, next) => {
   let csrfCookie = getCookie(req, CSRF_COOKIE_NAME)
   if (!csrfCookie) {
     csrfCookie = crypto.randomBytes(32).toString('hex')
-    setCsrfCookie(res, csrfCookie)
   }
+  clearLegacyCsrfCookie(res)
+  setCsrfCookie(res, csrfCookie)
 
   if (SAFE_METHODS.has(req.method)) return next()
 
