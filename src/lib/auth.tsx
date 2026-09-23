@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
@@ -72,6 +72,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const navigate = useNavigate();
+  const isLoggingOutRef = useRef(false);
 
   const applyDevAdminSession = useCallback(async () => {
     if (typeof window === "undefined") return;
@@ -161,7 +162,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const pathname = window.location.pathname;
     if (!user) {
-      if (pathname.startsWith("/admin") && pathname !== "/admin/login") {
+      const isLoggingOut = isLoggingOutRef.current;
+      isLoggingOutRef.current = false;
+      if (pathname.startsWith("/admin") && pathname !== "/admin/login" && !isLoggingOut) {
         navigate("/", { replace: true });
       }
       return;
@@ -241,6 +244,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // ignore logout errors
     } finally {
+      isLoggingOutRef.current = true;
       setUser(null);
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(USER_KEY);
