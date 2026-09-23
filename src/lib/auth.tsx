@@ -29,6 +29,7 @@ export function hasAdminRole(user: Pick<User, "role"> | null | undefined) {
 type AuthCtx = {
   user: User | null;
   hydrated: boolean;
+  isLoggingOut: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (name: string, email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -259,7 +260,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, hydrated, signIn, signUp, signOut, updateUser }),
+    () => ({ user, hydrated, isLoggingOut: isLoggingOutRef.current, signIn, signUp, signOut, updateUser }),
     [user, hydrated, signIn, signUp, signOut, updateUser]
   );
 

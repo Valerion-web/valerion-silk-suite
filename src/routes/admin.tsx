@@ -610,7 +610,7 @@ function ErrorState({ message }: { message: string }) {
 }
 
 function AdminRoutePage() {
-  const { user, hydrated, signOut } = useAuth();
+  const { user, hydrated, isLoggingOut, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const section = getSectionConfig(location.pathname);
@@ -678,7 +678,9 @@ function AdminRoutePage() {
     );
   }
 
-  if (!hasAdminRole(user)) return <Navigate to="/" replace />;
+  if (!hasAdminRole(user) && !isLoggingOut) {
+    return <Navigate to="/" replace />;
+  }
 
   const breadcrumbItems = location.pathname
     .replace(/^\/admin\/?/, "")
