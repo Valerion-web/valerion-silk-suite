@@ -245,7 +245,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(USER_KEY);
       }
-      navigate("/", { replace: true });
+      navigate("/admin/login", { replace: true });
       toast("Signed out", { className: "luxury-toast" });
     }
   }, [navigate]);
