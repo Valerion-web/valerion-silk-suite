@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter, Navigate, Routes, Route, useLocation } from "react-router-dom";
 
 import { Navbar } from "@/components/site/Navbar";
 import { Footer } from "@/components/site/Footer";
@@ -57,6 +57,14 @@ export default App;
 
 function AppShell() {
   const { pathname } = useLocation();
+  const isAdminHost =
+    typeof window !== "undefined" &&
+    window.location.hostname === "admin.haston.in";
+
+  if (pathname === "/" && isAdminHost) {
+    return <Navigate to="/admin/login" replace />;
+  }
+
   const isAdminRoute = pathname.startsWith("/admin");
 
   if (isAdminRoute) {
