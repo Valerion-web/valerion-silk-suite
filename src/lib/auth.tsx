@@ -178,7 +178,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (pathname.startsWith("/admin") && pathname !== "/admin/login") {
-      navigate("/", { replace: true });
+      navigate("/admin/login", { replace: true });
     }
   }, [user, hydrated, navigate]);
 
