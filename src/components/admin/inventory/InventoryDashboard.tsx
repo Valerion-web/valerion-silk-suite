@@ -31,7 +31,8 @@ import {
   YAxis,
 } from "recharts";
 import { toast } from "sonner";
-import { products as storefrontProducts } from "@/data/products";
+import { adminApiFetch } from "@/lib/admin-api";
+import { useAdminContext } from "@/lib/admin-context";
 import InventoryTable from "./InventoryTable";
 import type { InventoryItem, SortKey } from "./types";
 
@@ -62,48 +63,49 @@ const formatDate = (value: string) =>
 const formatHeaderDate = () =>
   new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "short", year: "numeric" }).format(new Date());
 
-const deriveStatus = (stock: number, reorderLevel: number) => {
-  if (stock <= 0) return "OUT_OF_STOCK" as const;
-  if (stock <= reorderLevel) return "LOW_STOCK" as const;
-  return "IN_STOCK" as const;
+type AdminInventoryResponseItem = {
+  id: number;
+  name: string;
+  sku: string;
+  countInStock: number;
+  reservedStock: number;
+  stockStatus: InventoryItem["status"];
+  lastUpdated: string;
+  image?: string | null;
+  category?: { id?: number; name?: string } | null;
 };
 
-const buildSeedInventory = (): InventoryItem[] =>
-  storefrontProducts.slice(0, 16).map((product, index) => {
-    const currentStock = 26 + index * 4;
-    const reservedStock = index % 4 === 0 ? 5 : index % 3 === 0 ? 3 : 1;
-    const reorderLevel = 10 + (index % 5);
-    const warehouse = warehouseOptions[index % warehouseOptions.length];
-    const now = new Date();
-    now.setDate(now.getDate() - index * 2);
+type AdminLowStockResponseItem = {
+  productId: number;
+};
 
-    return {
-      id: 2000 + index,
-      productId: String(product.id),
-      name: product.name,
-      sku: `HV-${String(index + 1).padStart(3, "0")}`,
-      category: product.category,
-      warehouse,
-      currentStock,
-      reservedStock,
-      reorderLevel,
-      unitCost: Math.round(product.price * 0.64),
-      price: product.price,
-      image: typeof product.image === "string" ? product.image : undefined,
-      status: deriveStatus(currentStock, reorderLevel),
-      lastUpdated: now.toISOString(),
-      history: [
-        {
-          id: Date.now() + index,
-          type: "create",
-          quantity: currentStock,
-          note: "Seeded inventory item",
-          timestamp: now.toISOString(),
-          warehouse,
-        },
-      ],
-    };
-  });
+async function fetchAdminInventory<T>(path: string): Promise<T> {
+  const response = await adminApiFetch(`/api/admin${path}`);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.message || "Unable to load inventory");
+  return body as T;
+}
+
+const mapAdminInventory = (items: AdminInventoryResponseItem[], lowStockItems: AdminLowStockResponseItem[]): InventoryItem[] => {
+  const lowStockProductIds = new Set(lowStockItems.map((item) => item.productId));
+  return items.map((item) => ({
+    id: item.id,
+    productId: String(item.id),
+    name: item.name,
+    sku: item.sku,
+    category: item.category?.name ?? "Uncategorized",
+    warehouse: "Main Warehouse",
+    currentStock: Number(item.countInStock || 0),
+    reservedStock: Number(item.reservedStock || 0),
+    reorderLevel: 10,
+    unitCost: 0,
+    price: 0,
+    image: item.image || undefined,
+    status: item.stockStatus === "OUT_OF_STOCK" ? item.stockStatus : lowStockProductIds.has(item.id) ? "LOW_STOCK" : item.stockStatus,
+    lastUpdated: item.lastUpdated,
+    history: [],
+  }));
+};
 
 const defaultValueTrend = [
   { month: "Jan", value: 1260000 },
@@ -174,7 +176,7 @@ class InventoryErrorBoundary extends Component<{ title: string; children: ReactN
   }
 }
 
-function InventoryHeader({ value, onSearch, pageSearch }: { value: string; onSearch: (value: string) => void; pageSearch: string }) {
+function InventoryHeader({ value, onSearch, pageSearch, isParentContext }: { value: string; onSearch: (value: string) => void; pageSearch: string; isParentContext: boolean }) {
   return (
     <div className="rounded-[18px] border border-[#E7EBF3] bg-white p-6 shadow-[0_16px_40px_-24px_rgba(9,30,66,0.16)]">
       <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
@@ -182,7 +184,7 @@ function InventoryHeader({ value, onSearch, pageSearch }: { value: string; onSea
           <p className="text-sm uppercase tracking-[0.28em] text-[#94A3B8]">Inventory management</p>
           <div>
             <h1 className="text-3xl font-semibold text-[#0A1931]">Inventory dashboard</h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-[#64748B]">Track stock across the catalog, adjust inventory levels, and keep low-stock items under control.</p>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-[#64748B]">{isParentContext ? "Parent context • Read only. Inspect inventory across active child-store inventory scope." : "Track stock across the catalog, adjust inventory levels, and keep low-stock items under control."}</p>
           </div>
         </div>
         <div className="grid w-full gap-4 sm:grid-cols-[1fr_auto] xl:w-auto xl:grid-cols-[minmax(260px,420px)_auto]">
@@ -493,7 +495,8 @@ const tooltipStyle = {
 };
 
 export default function InventoryDashboard() {
-  const [inventory, setInventory] = useState<InventoryItem[]>(() => buildSeedInventory());
+  const { isParentContext } = useAdminContext();
+  const [inventory, setInventory] = useState<InventoryItem[]>(() => []);
   const [pageSearch, setPageSearch] = useState("");
   const [tableSearch, setTableSearch] = useState("");
   const [warehouseFilter, setWarehouseFilter] = useState("all");
@@ -509,9 +512,37 @@ export default function InventoryDashboard() {
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setIsLoading(false), 240);
-    return () => window.clearTimeout(timer);
+    let cancelled = false;
+    Promise.all([
+      fetchAdminInventory<AdminInventoryResponseItem[]>("/inventory").then((response) => response || []),
+      fetchAdminInventory<AdminLowStockResponseItem[]>("/inventory/low-stock").catch(() => []),
+    ])
+      .then(([items, lowStockItems]) => {
+        if (!cancelled) {
+          setInventory(mapAdminInventory(items, lowStockItems));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setInventory([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  useEffect(() => {
+    if (isParentContext) {
+      setMenuOpenId(null);
+    }
+  }, [isParentContext]);
 
   useEffect(() => setPage(1), [tableSearch, warehouseFilter, categoryFilter, statusFilter, pageSize]);
 
@@ -647,7 +678,7 @@ export default function InventoryDashboard() {
   return (
     <div className="min-h-screen bg-[#F8FAFC] px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-[1440px] space-y-6">
-        <InventoryHeader value={formatHeaderDate()} onSearch={setPageSearch} pageSearch={pageSearch} />
+        <InventoryHeader value={formatHeaderDate()} onSearch={setPageSearch} pageSearch={pageSearch} isParentContext={isParentContext} />
 
         <section className="grid gap-5 xl:grid-cols-6">
           {cardStats.map((card) => (
@@ -690,9 +721,9 @@ export default function InventoryDashboard() {
                 <h2 className="mt-3 text-2xl font-semibold text-[#0A1931]">Inventory table</h2>
               </div>
               <div className="flex flex-wrap items-center gap-3">
-                <button type="button" className="inline-flex h-12 items-center justify-center rounded-[16px] border border-[#E7EBF3] bg-[#F8FAFC] px-4 text-sm font-semibold text-[#0A1931] transition hover:border-[#2563EB]">Bulk Actions</button>
-                <button type="button" className="inline-flex h-12 items-center justify-center rounded-[16px] border border-[#E7EBF3] bg-white px-4 text-sm font-semibold text-[#0A1931] transition hover:border-[#2563EB]">Export Selected</button>
-                <button type="button" className="inline-flex h-12 items-center justify-center rounded-[16px] border border-[#FEE2E2] bg-[#FEF2F2] px-4 text-sm font-semibold text-[#B91C1C] transition hover:bg-[#FEE2E2]">Delete Selected</button>
+                {!isParentContext && <button type="button" className="inline-flex h-12 items-center justify-center rounded-[16px] border border-[#E7EBF3] bg-[#F8FAFC] px-4 text-sm font-semibold text-[#0A1931] transition hover:border-[#2563EB]">Bulk Actions</button>}
+                {!isParentContext && <button type="button" className="inline-flex h-12 items-center justify-center rounded-[16px] border border-[#E7EBF3] bg-white px-4 text-sm font-semibold text-[#0A1931] transition hover:border-[#2563EB]">Export Selected</button>}
+                {!isParentContext && <button type="button" className="inline-flex h-12 items-center justify-center rounded-[16px] border border-[#FEE2E2] bg-[#FEF2F2] px-4 text-sm font-semibold text-[#B91C1C] transition hover:bg-[#FEE2E2]">Delete Selected</button>}
               </div>
             </div>
             <div className="mt-6">
@@ -725,6 +756,7 @@ export default function InventoryDashboard() {
                 onMenuToggle={setMenuOpenId}
                 warehouseOptions={warehouseOptions}
                 categoryOptions={categoryOptions}
+                readOnly={isParentContext}
               />
             </div>
           </div>

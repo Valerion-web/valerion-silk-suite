@@ -21,6 +21,7 @@ import TrackOrder from "@/routes/track-order";
 import Wishlist from "@/routes/wishlist";
 import Contact from "@/routes/contact";
 import AdminRoutePage from "@/routes/admin.tsx";
+import AdminLogin from "@/routes/admin-login";
 
 const queryClient = new QueryClient();
 
@@ -62,6 +63,7 @@ function AppShell() {
     return (
       <div className="min-h-screen overflow-visible bg-background">
         <Routes>
+          <Route path="/admin/login" element={<AdminLogin />} />
           <Route path="/" element={<Index />} />
           <Route path="/about" element={<About />} />
           <Route path="/shop" element={<Shop />} />

@@ -24,7 +24,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { products as storefrontProducts } from "@/data/products";
+import { fetchHASTONProducts } from "@/lib/hastonProducts";
 import InventoryTable from "./InventoryTable";
 import type { InventoryItem, SortKey } from "./types";
 
@@ -64,8 +64,8 @@ const downloadFile = (name: string, content: string, type: string) => {
   URL.revokeObjectURL(url);
 };
 
-const buildSeedInventory = (): InventoryItem[] =>
-  storefrontProducts.slice(0, 12).map((product, index) => {
+const buildSeedInventory = (products: Awaited<ReturnType<typeof fetchHASTONProducts>> = []): InventoryItem[] =>
+  products.slice(0, 12).map((product, index) => {
     const currentStock = 18 + index * 5;
     const reservedStock = index % 3 === 0 ? 4 : 1;
     const reorderLevel = 8 + (index % 4);
@@ -75,10 +75,10 @@ const buildSeedInventory = (): InventoryItem[] =>
 
     return {
       id: 1000 + index,
-      productId: product.id,
+      productId: String(product.id),
       name: product.name,
       sku: `VL-${String(index + 1).padStart(3, "0")}`,
-      category: product.category,
+      category: product.category?.name ?? "Uncategorized",
       warehouse,
       currentStock,
       reservedStock,
@@ -109,7 +109,7 @@ const getStatusMetadata = (item: InventoryItem) => {
 };
 
 export default function InventoryModule() {
-  const [inventory, setInventory] = useState<InventoryItem[]>(() => buildSeedInventory());
+  const [inventory, setInventory] = useState<InventoryItem[]>(() => []);
   const [query, setQuery] = useState("");
   const [warehouseFilter, setWarehouseFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -124,8 +124,27 @@ export default function InventoryModule() {
   const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setIsLoading(false), 320);
-    return () => window.clearTimeout(timer);
+    let cancelled = false;
+    fetchHASTONProducts()
+      .then((products) => {
+        if (!cancelled) {
+          setInventory(buildSeedInventory(products));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setInventory([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => setPage(1), [query, warehouseFilter, categoryFilter, statusFilter, pageSize]);
@@ -368,7 +387,7 @@ export default function InventoryModule() {
             history: [
               {
                 id: Date.now() + index + 1,
-                type: "create",
+                type: "create" as const,
                 quantity: record.currentStock,
                 note: "Imported from CSV",
                 timestamp: new Date().toISOString(),

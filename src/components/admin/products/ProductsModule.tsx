@@ -2,6 +2,8 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
+import { adminApiFetch } from "@/lib/admin-api";
+import { useAdminContext } from "@/lib/admin-context";
 import {
   Search,
   Grid,
@@ -231,11 +233,9 @@ function formatCurrency(value: number | string | undefined) {
 }
 
 function fetchAdmin(path: string, options: RequestInit = {}) {
-  const token = typeof window !== "undefined" ? window.localStorage.getItem("valerion.token") : null;
   const headers = new Headers(options.headers || {});
-  if (token) headers.set("Authorization", `Bearer ${token}`);
   if (!headers.has("Content-Type") && options.body && typeof options.body === "string") headers.set("Content-Type", "application/json");
-  return fetch(`/api/admin${path}`, { ...options, headers }).then(async (res) => {
+  return adminApiFetch(`/api/admin${path}`, { ...options, headers }).then(async (res) => {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.message || "Admin request failed");
     return data;
@@ -255,6 +255,18 @@ function normalizeBrandPayload(payload: unknown): BrandRecord[] | null {
   }
 
   return null;
+}
+
+function ErrorState({ message }: { message: string }) {
+  return (
+    <div className="rounded-[24px] border border-[#E5E7EB] bg-white p-8 text-sm text-[#111827] shadow-[0_20px_50px_-30px_rgba(15,23,42,0.25)]">
+      <div className="flex items-center gap-3">
+        <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-rose-700">Error</span>
+        <span className="font-semibold text-[#111827]">Unable to load product data</span>
+      </div>
+      <p className="mt-3 text-[#475569]">{message}</p>
+    </div>
+  );
 }
 
 const KPI_CARDS = [
@@ -894,11 +906,13 @@ function LuxuryProductsHeader({
   onCreate,
   onImport,
   onExport,
+  readOnly = false,
 }: {
   selectedCount: number;
   onCreate: () => void;
   onImport: () => void;
   onExport: () => void;
+  readOnly?: boolean;
 }) {
   return (
     <motion.div
@@ -919,15 +933,15 @@ function LuxuryProductsHeader({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <button type="button" onClick={onImport} className="inline-flex h-[46px] items-center justify-center rounded-[14px] border border-[#E5E7EB] bg-[#FFFFFF] px-4 text-sm font-semibold text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
+          {!readOnly && <button type="button" onClick={onImport} className="inline-flex h-[46px] items-center justify-center rounded-[14px] border border-[#E5E7EB] bg-[#FFFFFF] px-4 text-sm font-semibold text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
             <Upload className="mr-2 h-4 w-4 text-[#0F172A]" /> Import
-          </button>
+          </button>}
           <button type="button" onClick={onExport} className="inline-flex h-[46px] items-center justify-center rounded-[14px] border border-[#E5E7EB] bg-[#FFFFFF] px-4 text-sm font-semibold text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
             <Download className="mr-2 h-4 w-4 text-[#0F172A]" /> Export
           </button>
-          <button type="button" onClick={onCreate} className="inline-flex h-[46px] items-center justify-center rounded-[14px] bg-[#0F172A] px-5 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(15,23,42,0.16)] transition duration-200 hover:bg-[#111827]">
+          {!readOnly && <button type="button" onClick={onCreate} className="inline-flex h-[46px] items-center justify-center rounded-[14px] bg-[#0F172A] px-5 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(15,23,42,0.16)] transition duration-200 hover:bg-[#111827]">
             <Plus className="mr-2 h-4 w-4" /> Add Product
-          </button>
+          </button>}
         </div>
       </div>
       {selectedCount > 0 && (
@@ -960,6 +974,7 @@ function LuxuryProductFilters({
   onPriceRangeChange,
   onSortChange,
   onClear,
+  readOnly = false,
 }: {
   query: string;
   onQueryChange: (value: string) => void;
@@ -980,6 +995,7 @@ function LuxuryProductFilters({
   onPriceRangeChange: (range: [number, number]) => void;
   onSortChange: (value: string) => void;
   onClear: () => void;
+  readOnly?: boolean;
 }) {
   return (
     <motion.div
@@ -1006,9 +1022,9 @@ function LuxuryProductFilters({
           <button type="button" onClick={onClear} className="inline-flex h-[46px] items-center justify-center rounded-[14px] border border-[#E5E7EB] bg-[#FFFFFF] px-3 text-sm font-semibold text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/30">
             Reset
           </button>
-          <button type="button" className="inline-flex h-[46px] items-center justify-center rounded-[14px] bg-[#0F172A] px-4 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(15,23,42,0.16)] transition duration-200 hover:bg-[#111827] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/30">
+          {!readOnly && <button type="button" className="inline-flex h-[46px] items-center justify-center rounded-[14px] bg-[#0F172A] px-4 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(15,23,42,0.16)] transition duration-200 hover:bg-[#111827] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/30">
             <Plus className="mr-2 h-4 w-4" /> Add Product
-          </button>
+          </button>}
         </div>
       </div>
       <div className="mt-4 grid w-full max-w-full min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -1583,6 +1599,7 @@ function LuxuryQuickInsights({
   onAssignCategory,
   onExport,
   onDelete,
+  readOnly = false,
 }: {
   stats: Record<string, number>;
   stockHealthItems: Array<{ label: string; value: number; color: string; description: string }>;
@@ -1598,6 +1615,7 @@ function LuxuryQuickInsights({
   onAssignCategory: () => void;
   onExport: () => void;
   onDelete: () => void;
+  readOnly?: boolean;
 }) {
   const publishedPercent = stats.total ? Math.round((stats.published / stats.total) * 100) : 0;
   const draftPercent = stats.total ? Math.round((stats.drafts / stats.total) * 100) : 0;
@@ -1649,7 +1667,7 @@ function LuxuryQuickInsights({
       </motion.div>
       <InventoryHealth items={stockHealthItems} />
       <LowStockAlerts products={recentProducts} />
-      <QuickActionsCard selectedCount={selectedCount} onPublish={onPublish} onArchive={onArchive} onDuplicate={onDuplicate} onAssignCollection={onAssignCollection} onAssignCategory={onAssignCategory} onExport={onExport} onDelete={onDelete} />
+      {!readOnly && <QuickActionsCard selectedCount={selectedCount} onPublish={onPublish} onArchive={onArchive} onDuplicate={onDuplicate} onAssignCollection={onAssignCollection} onAssignCategory={onAssignCategory} onExport={onExport} onDelete={onDelete} />}
       <RecentProducts products={recentProducts.slice(0, 3)} />
     </div>
   );
@@ -1667,6 +1685,7 @@ function LuxuryProductTable({
   onEdit,
   onDuplicate,
   onArchive,
+  readOnly = false,
   pagination,
 }: {
   products: ProductRecord[];
@@ -1680,6 +1699,7 @@ function LuxuryProductTable({
   onEdit: (product: ProductRecord) => void;
   onDuplicate: (product: ProductRecord) => void;
   onArchive: (product: ProductRecord) => void;
+  readOnly?: boolean;
   pagination: { page: number; pageCount: number; pageSize: number; onPageChange: (page: number) => void; onPageSizeChange: (size: number) => void };
 }) {
   return (
@@ -1691,7 +1711,7 @@ function LuxuryProductTable({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={exportSelected} className="inline-flex h-[40px] items-center justify-center rounded-[12px] border border-[#E5E7EB] bg-white px-3 text-sm font-semibold text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Export</button>
-          <button type="button" className="inline-flex h-[40px] items-center justify-center rounded-[12px] border border-[#E5E7EB] bg-white px-3 text-sm font-semibold text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Bulk actions</button>
+          {!readOnly && <button type="button" className="inline-flex h-[40px] items-center justify-center rounded-[12px] border border-[#E5E7EB] bg-white px-3 text-sm font-semibold text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Bulk actions</button>}
         </div>
       </div>
       <div className="max-h-[560px] overflow-y-auto overflow-x-hidden">
@@ -1752,18 +1772,18 @@ function LuxuryProductTable({
                       <button type="button" title="Preview" onClick={() => onPreview(product)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
                         <Eye className="h-4 w-4" />
                       </button>
-                      <button type="button" title="Edit" onClick={() => onEdit(product)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
+                      {!readOnly && <button type="button" title="Edit" onClick={() => onEdit(product)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
                         <Edit className="h-4 w-4" />
-                      </button>
-                      <button type="button" title="Duplicate" onClick={() => onDuplicate(product)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
+                      </button>}
+                      {!readOnly && <button type="button" title="Duplicate" onClick={() => onDuplicate(product)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
                         <Copy className="h-4 w-4" />
-                      </button>
-                      <button type="button" title="Publish" onClick={() => onArchive(product)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
+                      </button>}
+                      {!readOnly && <button type="button" title="Publish" onClick={() => onArchive(product)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
                         <CheckCircle2 className="h-4 w-4" />
-                      </button>
-                      <button type="button" title="Delete" onClick={() => onDelete(product.id)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-rose-200 bg-rose-50 text-rose-600 transition duration-200 hover:bg-rose-100">
+                      </button>}
+                      {!readOnly && <button type="button" title="Delete" onClick={() => onDelete(product.id)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-rose-200 bg-rose-50 text-rose-600 transition duration-200 hover:bg-rose-100">
                         <Trash2 className="h-4 w-4" />
-                      </button>
+                      </button>}
                     </div>
                   </td>
                 </tr>
@@ -1793,22 +1813,22 @@ function LuxuryProductTable({
   );
 }
 
-function LuxuryEmptyState({ onCreate }: { onCreate: () => void }) {
+function LuxuryEmptyState({ onCreate, readOnly = false }: { onCreate: () => void; readOnly?: boolean }) {
   return (
     <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="rounded-[24px] border border-dashed border-[#E5E7EB] bg-[#FFFFFF] p-10 text-center shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
       <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-[#E5E7EB] bg-[#F8F9FB] text-[#0F172A]">
         <Package className="h-8 w-8" />
       </div>
       <h3 className="mt-6 text-2xl font-semibold text-[#111827]">No products have been added yet.</h3>
-      <p className="mx-auto mt-3 max-w-lg text-sm leading-7 text-[#6B7280]">Your catalog is ready for a luxury launch. Create the first collection entry and begin curating premium inventory.</p>
-      <button type="button" onClick={onCreate} className="mt-6 inline-flex h-[46px] items-center justify-center rounded-[14px] bg-[#0F172A] px-5 text-sm font-semibold text-white transition duration-200 hover:bg-[#111827]">
+      <p className="mx-auto mt-3 max-w-lg text-sm leading-7 text-[#6B7280]">{readOnly ? "Products are available for inspection in the selected parent context." : "Your catalog is ready for a luxury launch. Create the first collection entry and begin curating premium inventory."}</p>
+      {!readOnly && <button type="button" onClick={onCreate} className="mt-6 inline-flex h-[46px] items-center justify-center rounded-[14px] bg-[#0F172A] px-5 text-sm font-semibold text-white transition duration-200 hover:bg-[#111827]">
         <Plus className="mr-2 h-4 w-4" /> Add First Product
-      </button>
+      </button>}
     </motion.div>
   );
 }
 
-function LuxuryPreviewDrawer({ product, onClose }: { product: ProductRecord | null; onClose: () => void }) {
+function LuxuryPreviewDrawer({ product, onClose, readOnly = false }: { product: ProductRecord | null; onClose: () => void; readOnly?: boolean }) {
   if (!product) return null;
 
   const gallery = product.images?.slice(0, 4) ?? [];
@@ -1882,7 +1902,7 @@ function LuxuryPreviewDrawer({ product, onClose }: { product: ProductRecord | nu
             </div>
           </div>
           <div className="mt-4 flex gap-3">
-            <button type="button" onClick={() => onClose()} className="flex-1 rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-3 text-sm font-semibold text-[#111827] transition duration-200 hover:bg-[#F8F9FB]">Quick edit</button>
+            {!readOnly && <button type="button" onClick={() => onClose()} className="flex-1 rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-3 text-sm font-semibold text-[#111827] transition duration-200 hover:bg-[#F8F9FB]">Quick edit</button>}
             <button type="button" onClick={() => onClose()} className="flex-1 rounded-[14px] bg-[#0F172A] px-4 py-3 text-sm font-semibold text-white transition duration-200 hover:bg-[#111827]">Keep reviewing</button>
           </div>
         </div>
@@ -1891,8 +1911,9 @@ function LuxuryPreviewDrawer({ product, onClose }: { product: ProductRecord | nu
   );
 }
 
-export function ProductsPage(): JSX.Element {
+export function ProductsPage() {
   const navigate = useNavigate();
+  const { isParentContext } = useAdminContext();
   const [products, setProducts] = useState<ProductRecord[]>([]);
   const [categories, setCategories] = useState<{ id: number; name?: string }[]>([]);
   const [brands, setBrands] = useState<{ id: number; name?: string }[]>([]);
@@ -2122,8 +2143,7 @@ export function ProductsPage(): JSX.Element {
 
   const handleExport = async (format: "csv" | "xlsx") => {
     try {
-      const token = typeof window !== "undefined" ? window.localStorage.getItem("valerion.token") : null;
-      const res = await fetch(`/api/admin/export/products?format=${format}`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+      const res = await adminApiFetch(`/api/admin/export/products?format=${format}`);
       if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();
       const link = document.createElement("a");
@@ -2202,6 +2222,7 @@ export function ProductsPage(): JSX.Element {
           onCreate={() => navigate("/admin/products/add")}
           onImport={() => document.getElementById("admin-import-input")?.click()}
           onExport={() => void handleExport("csv")}
+          readOnly={isParentContext}
         />
 
         <LuxuryProductFilters
@@ -2223,6 +2244,7 @@ export function ProductsPage(): JSX.Element {
           onStatusChange={setStatusFilter}
           onPriceRangeChange={setPriceRange}
           onSortChange={setSortBy}
+          readOnly={isParentContext}
           onClear={() => {
             setQuery("");
             setCategoryFilter("");
@@ -2251,7 +2273,7 @@ export function ProductsPage(): JSX.Element {
           ) : error ? (
             <div className="rounded-[24px] border border-rose-200 bg-rose-50 p-10 text-center text-sm text-rose-700 shadow-[0_8px_30px_rgba(0,0,0,0.06)]">{error}</div>
           ) : filteredProducts.length === 0 ? (
-            <LuxuryEmptyState onCreate={() => navigate("/admin/products/add")} />
+            <LuxuryEmptyState onCreate={() => navigate("/admin/products/add")} readOnly={isParentContext} />
           ) : (
             <>
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-[#E5E7EB] bg-[#FFFFFF] px-4 py-4 shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
@@ -2261,9 +2283,9 @@ export function ProductsPage(): JSX.Element {
                 </div>
                 {selectedIds.length > 0 ? (
                   <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={bulkDelete} className="inline-flex h-[42px] items-center justify-center rounded-[14px] border border-rose-200 bg-rose-50 px-4 text-sm font-semibold text-rose-700 transition duration-200 hover:bg-rose-100">
+                    {!isParentContext && <button type="button" onClick={bulkDelete} className="inline-flex h-[42px] items-center justify-center rounded-[14px] border border-rose-200 bg-rose-50 px-4 text-sm font-semibold text-rose-700 transition duration-200 hover:bg-rose-100">
                       Delete selected
-                    </button>
+                    </button>}
                     <button type="button" onClick={() => setSelectedIds([])} className="inline-flex h-[42px] items-center justify-center rounded-[14px] border border-[#E5E7EB] bg-[#FFFFFF] px-4 text-sm font-semibold text-[#111827] transition duration-200 hover:bg-[#F8F9FB]">
                       Clear
                     </button>
@@ -2285,6 +2307,7 @@ export function ProductsPage(): JSX.Element {
                 onEdit={(product) => navigate(`/admin/products/${product.id}/edit`)}
                 onDuplicate={(product) => toast.success(`${product.name || "Product"} duplicated locally`) }
                 onArchive={(product) => toast.success(`${product.name || "Product"} archived`) }
+                readOnly={isParentContext}
                 pagination={{
                   page,
                   pageCount,
@@ -2337,19 +2360,63 @@ export function ProductsPage(): JSX.Element {
           onAssignCategory={handleAssignCategory}
           onExport={() => void handleExport("csv")}
           onDelete={bulkDelete}
+          readOnly={isParentContext}
         />
       </motion.div>
 
       <input id="admin-import-input" type="file" accept=".csv,.xlsx" className="hidden" onChange={() => toast.success("Import file selected")} />
 
-      <LuxuryPreviewDrawer product={drawerProduct} onClose={() => setDrawerProduct(null)} />
+      <LuxuryPreviewDrawer product={drawerProduct} onClose={() => setDrawerProduct(null)} readOnly={isParentContext} />
     </div>
   );
 }
 
-export function ProductFormPage(): JSX.Element {
+function ParentProductInspection({ form, productId, onBack }: { form: ProductFormValues; productId?: string; onBack: () => void }) {
+  const fields = [
+    ["Product name", form.name || "Unnamed product"],
+    ["SKU", form.sku || "—"],
+    ["Slug", form.slug || "—"],
+    ["Price", form.price ? formatCurrency(Number(form.price)) : "—"],
+    ["Stock", form.countInStock || "0"],
+    ["Status", form.status || "—"],
+    ["Category", form.categoryId ? String(form.categoryId) : "—"],
+    ["Brand", form.brandId ? String(form.brandId) : "—"],
+  ];
+
+  return (
+    <section className="rounded-[30px] border border-[#E5E7EB] bg-white p-8 shadow-[0_18px_48px_-30px_rgba(4,30,66,0.18)]">
+      <div className="flex flex-col gap-4 border-b border-[#E5E7EB] pb-6 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.32em] text-[#C9A227]">Parent context • Read only</p>
+          <h1 className="mt-2 text-2xl font-semibold text-[#081321]">{productId ? "Product inspection" : "Product management"}</h1>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-[#64748B]">Product data can be inspected from the House of Valerion parent context. Ecommerce changes are available from a concrete child store.</p>
+        </div>
+        <button type="button" onClick={onBack} className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[#081321] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Back to products</button>
+      </div>
+      {productId ? (
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          {fields.map(([label, value]) => (
+            <div key={label} className="rounded-[18px] border border-slate-200 bg-[#F8FAFC] p-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-[#64748B]">{label}</p>
+              <p className="mt-2 text-sm font-semibold text-[#081321]">{value}</p>
+            </div>
+          ))}
+          <div className="rounded-[18px] border border-slate-200 bg-[#F8FAFC] p-4 sm:col-span-2">
+            <p className="text-xs uppercase tracking-[0.24em] text-[#64748B]">Description</p>
+            <p className="mt-2 text-sm leading-6 text-[#475569]">{form.description || form.shortDescription || "No description available."}</p>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-6 rounded-[18px] border border-dashed border-slate-300 bg-[#F8FAFC] p-6 text-sm text-[#475569]">Creating products is unavailable in the parent context. Select HASTON to manage the child catalogue.</p>
+      )}
+    </section>
+  );
+}
+
+export function ProductFormPage() {
   const { productId } = useParams<{ productId?: string }>();
   const navigate = useNavigate();
+  const { isParentContext } = useAdminContext();
   const isEdit = Boolean(productId);
   const [form, setForm] = useState<ProductFormValues>(DEFAULT_FORM);
   const [categories, setCategories] = useState<{ id: number; name?: string }[]>([]);
@@ -2593,6 +2660,10 @@ export function ProductFormPage(): JSX.Element {
     return <ErrorState message={error} />;
   }
 
+  if (isParentContext) {
+    return <ParentProductInspection form={form} productId={productId} onBack={() => navigate("/admin/products")} />;
+  }
+
   return (
     <div className="space-y-6">
       <div className="sticky top-[92px] z-30 rounded-[30px] border border-[#E5E7EB] bg-white/95 px-4 py-4 shadow-[0_18px_50px_-28px_rgba(15,23,42,0.25)] backdrop-blur-xl">
@@ -2715,7 +2786,7 @@ export function ProductFormPage(): JSX.Element {
                   <span className="font-semibold">{field.label}</span>
                   <div className="relative">
                     <input
-                      value={form[field.key as keyof ProductFormValues]}
+                      value={String(form[field.key as keyof ProductFormValues] ?? "")}
                       onChange={(event) => updateForm(field.key as keyof ProductFormValues, event.target.value)}
                       placeholder={field.label}
                       className={`w-full rounded-[18px] border px-4 py-3 pr-12 text-sm text-[#081321] outline-none transition focus:border-[#C9A227] ${validationErrors[field.key as string] ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-white"}`}
@@ -2746,7 +2817,7 @@ export function ProductFormPage(): JSX.Element {
                 <label key={field.key} className="space-y-2 text-sm text-[#081321]">
                   <span className="font-semibold">{field.label}</span>
                   <input
-                    value={form[field.key as keyof ProductFormValues]}
+                    value={String(form[field.key as keyof ProductFormValues] ?? "")}
                     onChange={(event) => updateForm(field.key as keyof ProductFormValues, event.target.value)}
                     type="number"
                     min="0"
@@ -3104,7 +3175,7 @@ export function ProductFormPage(): JSX.Element {
   );
 }
 
-export function ProductDetailsPage(): JSX.Element {
+export function ProductDetailsPage() {
   const navigate = useNavigate();
   return (
     <div className="rounded-[28px] bg-white p-8 shadow-[0_30px_80px_-40px_rgba(15,23,42,0.12)]">
@@ -3185,7 +3256,8 @@ function createBrandDraft(seed?: Partial<BrandRecord>): BrandFormState {
   };
 }
 
-export function BrandsPage(): JSX.Element {
+export function BrandsPage() {
+  const { isParentContext } = useAdminContext();
   const [brands, setBrands] = useState<BrandRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -3207,6 +3279,13 @@ export function BrandsPage(): JSX.Element {
   const [confirmAction, setConfirmAction] = useState<{ type: "delete" | "archive" | "duplicate"; brand: BrandRecord | null }>({ type: "delete", brand: null });
   const [activity, setActivity] = useState<Array<{ id: number; title: string; detail: string; time: string }>>([]);
   const [cropMode, setCropMode] = useState("center");
+
+  useEffect(() => {
+    if (isParentContext) {
+      setComposerOpen(false);
+      setConfirmAction({ type: "delete", brand: null });
+    }
+  }, [isParentContext]);
 
   const defaultBrands = useMemo<BrandRecord[]>(() => [
     {
@@ -3416,6 +3495,7 @@ export function BrandsPage(): JSX.Element {
   };
 
   const openCreateComposer = () => {
+    if (isParentContext) return;
     setMode("create");
     setEditingBrand(null);
     setDraft(createBrandDraft());
@@ -3423,6 +3503,7 @@ export function BrandsPage(): JSX.Element {
   };
 
   const openEditComposer = (brand: BrandRecord) => {
+    if (isParentContext) return;
     setMode("edit");
     setEditingBrand(brand);
     setDraft(createBrandDraft(brand));
@@ -3606,7 +3687,7 @@ export function BrandsPage(): JSX.Element {
             <p className="text-[11px] font-semibold uppercase tracking-[0.36em] text-[#D4AF37]">HOUSE OF VALERION</p>
             <h2 className="mt-3 text-3xl font-semibold tracking-[-0.02em] text-[#0A1931]" style={{ fontFamily: '"Playfair Display", "Georgia", serif' }}>Brands</h2>
             <p className="mt-3 text-lg font-medium text-[#0A1931]">Luxury brand management</p>
-            <p className="mt-2 text-sm leading-7 text-[#64748B]">Manage premium fashion brands, brand identity, product collections and merchandising across the entire catalogue with an executive-grade control surface.</p>
+            <p className="mt-2 text-sm leading-7 text-[#64748B]">{isParentContext ? "Parent context • Read only. Inspect brand data across active child-store brand scope." : "Manage premium fashion brands, brand identity, product collections and merchandising across the entire catalogue with an executive-grade control surface."}</p>
           </div>
           <div className="rounded-[24px] border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">
             {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
@@ -3756,9 +3837,9 @@ export function BrandsPage(): JSX.Element {
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={resetFilters} className="rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-sm font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Reset</button>
-          <button type="button" onClick={handleImport} className="rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-sm font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Import</button>
+          {!isParentContext && <button type="button" onClick={handleImport} className="rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-sm font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Import</button>}
           <button type="button" onClick={() => handleQuickAction("export")} className="rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-sm font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Export</button>
-          <button type="button" onClick={openCreateComposer} className="rounded-full bg-[#0A1931] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#102B4F]">Create brand</button>
+          {!isParentContext && <button type="button" onClick={openCreateComposer} className="rounded-full bg-[#0A1931] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#102B4F]">Create brand</button>}
         </div>
       </div>
 
@@ -3822,12 +3903,14 @@ export function BrandsPage(): JSX.Element {
                     <td className="px-4 py-4"><span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getFeatureTone(brand.featured)}`}>{brand.featured ? "Featured" : "Standard"}</span></td>
                     <td className="px-4 py-4 text-[#64748B]">{formatDateLabel(brand.updatedAt)}</td>
                     <td className="px-4 py-4">
-                      <div className="flex gap-2">
-                        <button type="button" onClick={() => openEditComposer(brand)} className="rounded-full border border-[#E5E7EB] bg-white p-2 text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]" title="Edit"><Edit className="h-4 w-4" /></button>
-                        <button type="button" onClick={() => setConfirmAction({ type: "duplicate", brand })} className="rounded-full border border-[#E5E7EB] bg-white p-2 text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]" title="Duplicate"><Copy className="h-4 w-4" /></button>
-                        <button type="button" onClick={() => setConfirmAction({ type: "archive", brand })} className="rounded-full border border-[#E5E7EB] bg-white p-2 text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]" title="Archive"><Archive className="h-4 w-4" /></button>
-                        <button type="button" onClick={() => setConfirmAction({ type: "delete", brand })} className="rounded-full border border-rose-200 bg-white p-2 text-rose-600 transition hover:bg-rose-50" title="Delete"><Trash2 className="h-4 w-4" /></button>
-                      </div>
+                      {!isParentContext ? (
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => openEditComposer(brand)} className="rounded-full border border-[#E5E7EB] bg-white p-2 text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]" title="Edit"><Edit className="h-4 w-4" /></button>
+                          <button type="button" onClick={() => setConfirmAction({ type: "duplicate", brand })} className="rounded-full border border-[#E5E7EB] bg-white p-2 text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]" title="Duplicate"><Copy className="h-4 w-4" /></button>
+                          <button type="button" onClick={() => setConfirmAction({ type: "archive", brand })} className="rounded-full border border-[#E5E7EB] bg-white p-2 text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]" title="Archive"><Archive className="h-4 w-4" /></button>
+                          <button type="button" onClick={() => setConfirmAction({ type: "delete", brand })} className="rounded-full border border-rose-200 bg-white p-2 text-rose-600 transition hover:bg-rose-50" title="Delete"><Trash2 className="h-4 w-4" /></button>
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -3860,7 +3943,7 @@ export function BrandsPage(): JSX.Element {
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
                       <button type="button" onClick={() => setSelectedBrand(brand)} className="rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-xs font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">View</button>
-                      <button type="button" onClick={() => openEditComposer(brand)} className="rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-xs font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Edit</button>
+                      {!isParentContext && <button type="button" onClick={() => openEditComposer(brand)} className="rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-xs font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Edit</button>}
                     </div>
                   </div>
                 </motion.div>
@@ -3937,9 +4020,9 @@ export function BrandsPage(): JSX.Element {
               <div className="rounded-[24px] border border-[#E5E7EB] bg-white p-5">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.32em] text-[#D4AF37]">Quick actions</p>
                 <div className="mt-4 grid gap-2">
-                  <button type="button" onClick={() => handleQuickAction("assign", selectedBrand)} className="rounded-full border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-left text-sm font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Assign products</button>
-                  <button type="button" onClick={openCreateComposer} className="rounded-full border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-left text-sm font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Create brand</button>
-                  <button type="button" onClick={() => handleQuickAction("seo")} className="rounded-full border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-left text-sm font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Generate SEO</button>
+                  {!isParentContext && <button type="button" onClick={() => handleQuickAction("assign", selectedBrand)} className="rounded-full border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-left text-sm font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Assign products</button>}
+                  {!isParentContext && <button type="button" onClick={openCreateComposer} className="rounded-full border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-left text-sm font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Create brand</button>}
+                  {!isParentContext && <button type="button" onClick={() => handleQuickAction("seo")} className="rounded-full border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-left text-sm font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Generate SEO</button>}
                 </div>
               </div>
             </div>
@@ -3954,12 +4037,12 @@ export function BrandsPage(): JSX.Element {
           </div>
           <h3 className="mt-6 text-2xl font-semibold text-[#0A1931]">No brands yet</h3>
           <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-[#64748B]">Launch your first luxury brand experience and begin building a premium portfolio for your editorial storefront.</p>
-          <button type="button" onClick={openCreateComposer} className="mt-6 rounded-full bg-[#0A1931] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#102B4F]">Create brand</button>
+          {!isParentContext && <button type="button" onClick={openCreateComposer} className="mt-6 rounded-full bg-[#0A1931] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#102B4F]">Create brand</button>}
         </motion.div>
       ) : null}
 
       <AnimatePresence>
-        {composerOpen ? (
+        {composerOpen && !isParentContext ? (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-[#0A1931]/70 px-4 py-8 backdrop-blur-sm">
             <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 12, opacity: 0 }} className="max-h-[92vh] w-full max-w-6xl overflow-auto rounded-[32px] border border-[#E5E7EB] bg-white p-6 shadow-[0_40px_120px_-30px_rgba(10,25,49,0.5)]">
               <div className="flex flex-wrap items-start justify-between gap-4">
@@ -4138,9 +4221,14 @@ export function BrandsPage(): JSX.Element {
               <div className="mt-6 flex justify-end gap-3">
                 <button type="button" onClick={() => setConfirmAction({ type: confirmAction.type, brand: null })} className="rounded-full border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-2 text-sm font-semibold text-[#0A1931] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Cancel</button>
                 <button type="button" onClick={() => {
-                  if (confirmAction.type === "delete") handleDelete(confirmAction.brand);
-                  if (confirmAction.type === "archive") handleArchive(confirmAction.brand);
-                  if (confirmAction.type === "duplicate") handleDuplicate(confirmAction.brand);
+                  const selectedBrand = confirmAction.brand;
+                  if (!selectedBrand) {
+                    setConfirmAction({ type: confirmAction.type, brand: null });
+                    return;
+                  }
+                  if (confirmAction.type === "delete") handleDelete(selectedBrand);
+                  if (confirmAction.type === "archive") handleArchive(selectedBrand);
+                  if (confirmAction.type === "duplicate") handleDuplicate(selectedBrand);
                 }} className={`rounded-full px-4 py-2 text-sm font-semibold text-white transition ${confirmAction.type === "delete" ? "bg-rose-600 hover:bg-rose-700" : "bg-[#0A1931] hover:bg-[#102B4F]"}`}>
                   {confirmAction.type === "delete" ? "Delete" : confirmAction.type === "archive" ? "Archive" : "Duplicate"}
                 </button>

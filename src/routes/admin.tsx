@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import { adminApiFetch } from "@/lib/admin-api";
+import { AdminContextProvider, useAdminContext } from "@/lib/admin-context";
 import PremiumDashboardPage from "@/components/admin/PremiumDashboard";
 import AdminLayout from "@/components/admin/AdminLayout";
 import InventoryDashboard from "@/components/admin/inventory/InventoryDashboard";
@@ -53,7 +55,7 @@ import {
   Users,
   Wallet,
 } from "lucide-react";
-import { useAuth } from "@/lib/auth";
+import { hasAdminRole, useAuth } from "@/lib/auth";
 import { toast } from "sonner";
 
 type DashboardSummary = {
@@ -84,8 +86,23 @@ type OrderRecord = {
   status?: string;
   totalPrice?: number | string;
   createdAt?: string;
-  user?: { name?: string; email?: string };
-  items?: Array<{ product?: { name?: string }; quantity?: number; price?: number | string }>;
+  store?: { id?: number; name?: string; slug?: string } | null;
+  user?: { id?: number; name?: string; email?: string; role?: string } | null;
+  items?: Array<{
+    product?: { id?: number; name?: string; slug?: string; images?: string[] } | null;
+    variant?: { id?: number; sku?: string; name?: string; size?: string; color?: string; price?: number | string } | null;
+    quantity?: number;
+    price?: number | string;
+    productId?: number;
+    variantId?: number;
+  }>;
+  statusHistory?: Array<{
+    id?: number;
+    status?: string;
+    createdAt?: string;
+    note?: string | null;
+    changedBy?: { id?: number; name?: string; email?: string } | null;
+  }>;
 };
 
 type CategoryRecord = {
@@ -94,6 +111,18 @@ type CategoryRecord = {
   slug?: string;
   description?: string;
   productCount?: number;
+  parentCategory?: string;
+  color?: string;
+  status?: "ACTIVE" | "DRAFT" | "ARCHIVED" | string;
+  visibility?: "PUBLIC" | "HIDDEN" | string;
+  featured?: boolean;
+  sortOrder?: number;
+  seoTitle?: string;
+  seoDescription?: string;
+  keywords?: string[];
+  revenueShare?: number;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 type UserRecord = {
@@ -111,6 +140,7 @@ type CouponRecord = {
   id: number;
   code?: string;
   discountType?: string;
+  discount?: number | string;
   value?: number;
   expiresAt?: string;
   active?: boolean;
@@ -387,13 +417,11 @@ function inventoryStatusLabel(status?: string) {
 }
 
 function fetchAdmin(path: string, options: RequestInit = {}) {
-  const token = typeof window !== "undefined" ? window.localStorage.getItem("valerion.token") : null;
   const headers = new Headers(options.headers || {});
-  if (token) headers.set("Authorization", `Bearer ${token}`);
   if (!headers.has("Content-Type") && options.body && typeof options.body === "string") {
     headers.set("Content-Type", "application/json");
   }
-  return fetch(`/api/admin${path}`, { ...options, headers }).then(async (response) => {
+  return adminApiFetch(`/api/admin${path}`, { ...options, headers }).then(async (response) => {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(data?.message || "Admin request failed");
@@ -650,7 +678,7 @@ function AdminRoutePage() {
     );
   }
 
-  if (user?.role !== "ADMIN") return <Navigate to="/" replace />;
+  if (!hasAdminRole(user)) return <Navigate to="/" replace />;
 
   const breadcrumbItems = location.pathname
     .replace(/^\/admin\/?/, "")
@@ -670,7 +698,8 @@ function AdminRoutePage() {
   ];
 
   return (
-    <AdminLayout>
+    <AdminContextProvider>
+      <AdminLayout>
         <div className={isProductSection ? "space-y-6 py-4" : "px-4 py-5 sm:px-6 lg:px-8 lg:py-6"}>
           {!isDashboard && !isProductSection && (
           <motion.header
@@ -792,7 +821,8 @@ function AdminRoutePage() {
             </Routes>
           </div>
         </div>
-      </AdminLayout>
+        </AdminLayout>
+      </AdminContextProvider>
     );
 }
 
@@ -968,9 +998,7 @@ function ExportReportsPage() {
     try {
       setLoading(true);
       setError("");
-      const response = await fetch(`/api/admin/export/${resource}?format=${exportFormat}`, {
-        headers: { Authorization: `Bearer ${window.localStorage.getItem("valerion.token") ?? ""}` },
-      });
+      const response = await adminApiFetch(`/api/admin/export/${resource}?format=${exportFormat}`);
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.message || "Export failed");
@@ -1541,8 +1569,11 @@ function ProductFormPage() {
   );
 }
 
+const VALID_ORDER_STATUSES = ['PLACED', 'PENDING', 'PROCESSING', 'PACKED', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
+
 function OrdersPage() {
   const navigate = useNavigate();
+  const { isParentContext } = useAdminContext();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1555,7 +1586,11 @@ function OrdersPage() {
     const load = async () => {
       try {
         setLoading(true);
-        const data = await fetchAdmin("/orders");
+        const params = new URLSearchParams();
+        if (statusFilter !== 'all') params.set('status', statusFilter);
+        if (query.trim()) params.set('search', query.trim());
+        const suffix = params.toString();
+        const data = await fetchAdmin(`/orders${suffix ? `?${suffix}` : ''}`);
         setOrders(data || []);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unable to load orders");
@@ -1564,7 +1599,7 @@ function OrdersPage() {
       }
     };
     load();
-  }, []);
+  }, [query, statusFilter]);
 
   const filteredOrders = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -1590,6 +1625,7 @@ function OrdersPage() {
   }, [query, statusFilter]);
 
   const handleUpdateStatus = async (orderId: number, status: string) => {
+    if (isParentContext) return;
     try {
       const updated = await fetchAdmin(`/orders/${orderId}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
       setOrders((current) => current.map((item) => (item.id === orderId ? { ...item, status: updated.status } : item)));
@@ -1600,6 +1636,7 @@ function OrdersPage() {
   };
 
   const handleDeleteOrder = async (orderId: number) => {
+    if (isParentContext) return;
     if (!window.confirm("Delete this order permanently?")) return;
     try {
       await fetchAdmin(`/orders/${orderId}`, { method: "DELETE" });
@@ -1621,6 +1658,7 @@ function OrdersPage() {
           <div>
             <p className="text-[11px] uppercase tracking-[0.3em] text-[#D4AF37]">Order pipeline</p>
             <h2 className="mt-2 text-xl font-semibold text-[#041E42]">Orders</h2>
+            {isParentContext && <p className="mt-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#A16207]">Parent context • Read only</p>}
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <label className="block">
@@ -1640,10 +1678,9 @@ function OrdersPage() {
                 className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
               >
                 <option value="all">All statuses</option>
-                <option value="PENDING">Pending</option>
-                <option value="PROCESSING">Processing</option>
-                <option value="DELIVERED">Delivered</option>
-                <option value="CANCELLED">Cancelled</option>
+                {VALID_ORDER_STATUSES.map((status) => (
+                  <option key={status} value={status}>{status.replace(/\b\w/g, (letter) => letter.toUpperCase())}</option>
+                ))}
               </select>
             </label>
           </div>
@@ -1685,27 +1722,27 @@ function OrdersPage() {
                         >
                           View
                         </button>
-                        <button
+                        {!isParentContext && <button
                           type="button"
                           onClick={() => handleUpdateStatus(order.id, "PROCESSING")}
                           className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-[#041E42] hover:border-[#D4AF37] hover:bg-[#FFF8E8]"
                         >
                           Process
-                        </button>
-                        <button
+                        </button>}
+                        {!isParentContext && <button
                           type="button"
                           onClick={() => handleUpdateStatus(order.id, "DELIVERED")}
                           className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-[#041E42] hover:border-[#D4AF37] hover:bg-[#FFF8E8]"
                         >
                           Deliver
-                        </button>
-                        <button
+                        </button>}
+                        {!isParentContext && <button
                           type="button"
                           onClick={() => handleDeleteOrder(order.id)}
                           className="rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
                         >
                           Delete
-                        </button>
+                        </button>}
                       </div>
                     </td>
                   </tr>
@@ -1795,6 +1832,7 @@ function OrdersPage() {
 }
 
 function CategoriesPage() {
+  const { isParentContext } = useAdminContext();
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1845,6 +1883,13 @@ function CategoriesPage() {
     }),
     []
   );
+
+  useEffect(() => {
+    if (isParentContext) {
+      setComposerOpen(false);
+      setConfirmAction({ type: "delete", category: null });
+    }
+  }, [isParentContext]);
 
   useEffect(() => {
     const load = async () => {
@@ -2154,13 +2199,13 @@ function CategoriesPage() {
           <div className="max-w-2xl">
             <p className="text-[11px] font-semibold uppercase tracking-[0.36em] text-[#D4AF37]">House of Valerion</p>
             <h2 className="mt-3 text-3xl font-semibold tracking-[-0.02em] text-[#041E42]" style={{ fontFamily: '"Playfair Display", "Georgia", serif' }}>Category management</h2>
-            <p className="mt-3 text-sm leading-7 text-[#64748B]">Maintain and organize luxury collections across the catalogue with a precise, executive-grade control surface.</p>
+            <p className="mt-3 text-sm leading-7 text-[#64748B]">{isParentContext ? "Parent context • Read only. Inspect category data across active child stores." : "Maintain and organize luxury collections across the catalogue with a precise, executive-grade control surface."}</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <button type="button" onClick={openCreateComposer} className="inline-flex items-center gap-2 rounded-full bg-[#041E42] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#09295D]">
+            {!isParentContext && <button type="button" onClick={openCreateComposer} className="inline-flex items-center gap-2 rounded-full bg-[#041E42] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#09295D]">
               <Plus className="h-4 w-4" />
               Add category
-            </button>
+            </button>}
             <button type="button" onClick={handleExport} className="inline-flex items-center gap-2 rounded-full border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-2.5 text-sm font-semibold text-[#041E42] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
               <Download className="h-4 w-4" />
               Export
@@ -2289,18 +2334,18 @@ function CategoriesPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={resetFilters} className="rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-sm font-semibold text-[#041E42] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Reset</button>
-          <button type="button" onClick={triggerImport} className="inline-flex items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-sm font-semibold text-[#041E42] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
+          {!isParentContext && <button type="button" onClick={triggerImport} className="inline-flex items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-sm font-semibold text-[#041E42] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
             <Upload className="h-4 w-4" />
             Import
-          </button>
+          </button>}
           <button type="button" onClick={handleExport} className="inline-flex items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-sm font-semibold text-[#041E42] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
             <Download className="h-4 w-4" />
             Export
           </button>
-          <button type="button" onClick={openCreateComposer} className="inline-flex items-center gap-2 rounded-full bg-[#041E42] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#09295D]">
+          {!isParentContext && <button type="button" onClick={openCreateComposer} className="inline-flex items-center gap-2 rounded-full bg-[#041E42] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#09295D]">
             <Plus className="h-4 w-4" />
             Add category
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -2311,10 +2356,10 @@ function CategoriesPage() {
           </div>
           <h3 className="mt-5 text-2xl font-semibold text-[#041E42]">No categories yet</h3>
           <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-[#64748B]">Create a premium collection to define the next luxury edit for your storefront.</p>
-          <button type="button" onClick={openCreateComposer} className="mt-6 inline-flex items-center gap-2 rounded-full bg-[#041E42] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#09295D]">
+          {!isParentContext && <button type="button" onClick={openCreateComposer} className="mt-6 inline-flex items-center gap-2 rounded-full bg-[#041E42] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#09295D]">
             <Plus className="h-4 w-4" />
             Create category
-          </button>
+          </button>}
         </motion.div>
       ) : (
         <div className="grid gap-6 xl:grid-cols-[1.5fr_0.65fr]">
@@ -2356,7 +2401,7 @@ function CategoriesPage() {
                       </td>
                       <td className="px-4 py-4 text-[#64748B]">{formatDate(category.updatedAt)}</td>
                       <td className="px-4 py-4">
-                        <div className="flex flex-wrap gap-2">
+                        {!isParentContext && <div className="flex flex-wrap gap-2">
                           <button type="button" onClick={() => openEditComposer(category)} className="rounded-full border border-[#E5E7EB] bg-white p-2 text-[#041E42] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]" title="Edit">
                             <Settings2 className="h-4 w-4" />
                           </button>
@@ -2375,7 +2420,7 @@ function CategoriesPage() {
                           <button type="button" onClick={() => setConfirmAction({ type: "delete", category })} className="rounded-full border border-rose-200 bg-white p-2 text-rose-600 transition hover:bg-rose-50" title="Delete">
                             <Trash2 className="h-4 w-4" />
                           </button>
-                        </div>
+                        </div>}
                       </td>
                     </tr>
                   ))}
@@ -2392,7 +2437,7 @@ function CategoriesPage() {
                   { label: "Import categories", icon: Upload, onClick: triggerImport },
                   { label: "Export catalogue", icon: Download, onClick: handleExport },
                   { label: "Generate SEO", icon: Sparkles, onClick: handleGenerateSeo },
-                ].map((action) => {
+                ].filter((action) => !isParentContext || action.label === "Export catalogue").map((action) => {
                   const Icon = action.icon;
                   return (
                     <button key={action.label} type="button" onClick={action.onClick} className="flex items-center justify-between rounded-[18px] border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-3 text-left text-sm font-semibold text-[#041E42] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
@@ -2420,7 +2465,7 @@ function CategoriesPage() {
       )}
 
       <AnimatePresence>
-        {composerOpen ? (
+        {composerOpen && !isParentContext ? (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-[#041E42]/70 px-4 py-8 backdrop-blur-sm">
             <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 12, opacity: 0 }} className="max-h-[90vh] w-full max-w-6xl overflow-auto rounded-[32px] border border-[#E5E7EB] bg-white p-6 shadow-[0_40px_120px_-30px_rgba(4,30,66,0.45)]">
               <div className="flex flex-wrap items-start justify-between gap-4">
@@ -2581,7 +2626,7 @@ function CategoriesPage() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {confirmAction.category ? (
+        {confirmAction.category && !isParentContext ? (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center bg-[#041E42]/70 px-4 py-8 backdrop-blur-sm">
             <motion.div initial={{ y: 14, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 8, opacity: 0 }} className="w-full max-w-md rounded-[28px] border border-[#E5E7EB] bg-white p-6 shadow-[0_40px_120px_-30px_rgba(4,30,66,0.45)]">
               <p className="text-[11px] font-semibold uppercase tracking-[0.36em] text-[#D4AF37]">Confirm action</p>
@@ -2600,6 +2645,7 @@ function CategoriesPage() {
 }
 
 function UsersPage() {
+  const { isParentContext } = useAdminContext();
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -2636,6 +2682,7 @@ function UsersPage() {
   }, [users, query, roleFilter]);
 
   const handleUpdateRole = async (userId: number, role: string) => {
+    if (isParentContext) return;
     try {
       setSaving(true);
       const updated = await fetchAdmin(`/users/${userId}`, { method: "PUT", body: JSON.stringify({ role }) });
@@ -2650,6 +2697,7 @@ function UsersPage() {
   };
 
   const handleDeleteUser = async (userId: number) => {
+    if (isParentContext) return;
     if (!window.confirm("Delete this user and all associated orders?")) return;
     try {
       await fetchAdmin(`/users/${userId}`, { method: "DELETE" });
@@ -2671,6 +2719,7 @@ function UsersPage() {
           <div>
             <p className="text-[11px] uppercase tracking-[0.3em] text-[#D4AF37]">User roster</p>
             <h2 className="mt-2 text-xl font-semibold text-[#041E42]">Users</h2>
+            {isParentContext && <p className="mt-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#A16207]">Parent context • Read only</p>}
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <label className="block">
@@ -2731,21 +2780,21 @@ function UsersPage() {
                         >
                           View
                         </button>
-                        <button
+                        {!isParentContext && <button
                           type="button"
                           onClick={() => handleUpdateRole(user.id, user.role === "ADMIN" ? "CUSTOMER" : "ADMIN")}
                           disabled={saving}
                           className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-[#041E42] hover:border-[#D4AF37] hover:bg-[#FFF8E8]"
                         >
                           Toggle role
-                        </button>
-                        <button
+                        </button>}
+                        {!isParentContext && <button
                           type="button"
                           onClick={() => handleDeleteUser(user.id)}
                           className="rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
                         >
                           Delete
-                        </button>
+                        </button>}
                       </div>
                     </td>
                   </tr>
@@ -2792,6 +2841,7 @@ function UsersPage() {
 }
 
 function CouponsPage() {
+  const { isParentContext } = useAdminContext();
   const [coupons, setCoupons] = useState<CouponRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -2835,18 +2885,20 @@ function CouponsPage() {
     setSelectedCoupon(coupon);
     setForm({
       code: coupon.code || "",
-      discount: String(coupon.value || ""),
+      discount: String(coupon.value ?? coupon.discount ?? ""),
       expiresAt: coupon.expiresAt || "",
       active: Boolean(coupon.active),
+      usageLimit: coupon.usageLimit == null ? "" : String(coupon.usageLimit),
     });
   };
 
   const resetForm = () => {
     setSelectedCoupon(null);
-    setForm({ code: "", discount: "", expiresAt: "", active: true });
+    setForm({ code: "", discount: "", expiresAt: "", active: true, usageLimit: "" });
   };
 
   const handleSubmit = async (event: FormEvent) => {
+    if (isParentContext) return;
     event.preventDefault();
     setSaving(true);
     try {
@@ -2876,6 +2928,7 @@ function CouponsPage() {
   };
 
   const handleDelete = async (couponId: number) => {
+    if (isParentContext) return;
     if (!window.confirm("Delete this coupon?")) return;
     try {
       await fetchAdmin(`/coupons/${couponId}`, { method: "DELETE" });
@@ -2897,6 +2950,7 @@ function CouponsPage() {
           <div>
             <p className="text-[11px] uppercase tracking-[0.3em] text-[#D4AF37]">Coupon center</p>
             <h2 className="mt-2 text-xl font-semibold text-[#041E42]">Coupons</h2>
+            {isParentContext && <p className="mt-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#A16207]">Parent context • Read only</p>}
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <label className="block">
@@ -2950,7 +3004,7 @@ function CouponsPage() {
                         {coupon.active ? "Active" : "Inactive"}
                       </span>
                     </td>
-                    <td className="py-3">
+                    {!isParentContext && <td className="py-3">
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
@@ -2967,7 +3021,7 @@ function CouponsPage() {
                           Delete
                         </button>
                       </div>
-                    </td>
+                    </td>}
                   </tr>
                 ))}
               </tbody>
@@ -2976,7 +3030,7 @@ function CouponsPage() {
         </section>
       )}
 
-      <section className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_20px_60px_-32px_rgba(4,30,66,0.28)]">
+      {!isParentContext && <section className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_20px_60px_-32px_rgba(4,30,66,0.28)]">
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-[11px] uppercase tracking-[0.3em] text-[#D4AF37]">Coupon editor</p>
@@ -3051,7 +3105,7 @@ function CouponsPage() {
             <p className="text-sm text-[#4B5563]">Coupons can be managed here and applied via the storefront checkout logic.</p>
           </div>
         </form>
-      </section>
+      </section>}
     </div>
   );
 }
@@ -3061,6 +3115,7 @@ function InventoryPage() {
 }
 
 function ReviewsPage() {
+  const { isParentContext } = useAdminContext();
   const [reviews, setReviews] = useState<ReviewRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -3096,6 +3151,7 @@ function ReviewsPage() {
   }, [reviews, query, statusFilter]);
 
   const handleReviewAction = async (reviewId: number, action: "approve" | "reject") => {
+    if (isParentContext) return;
     try {
       const updated = await fetchAdmin(`/reviews/${reviewId}/${action}`, { method: "PATCH" });
       setReviews((current) => current.map((review) => (review.id === reviewId ? updated : review)));
@@ -3106,6 +3162,7 @@ function ReviewsPage() {
   };
 
   const handleDelete = async (reviewId: number) => {
+    if (isParentContext) return;
     if (!window.confirm("Delete this review?")) return;
     try {
       await fetchAdmin(`/reviews/${reviewId}`, { method: "DELETE" });
@@ -3126,6 +3183,7 @@ function ReviewsPage() {
           <div>
             <p className="text-[11px] uppercase tracking-[0.3em] text-[#D4AF37]">Review workflow</p>
             <h2 className="mt-2 text-xl font-semibold text-[#041E42]">Reviews</h2>
+            {isParentContext && <p className="mt-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#A16207]">Parent context • Read only</p>}
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <label className="block">
@@ -3174,7 +3232,7 @@ function ReviewsPage() {
                   </div>
                 </div>
                 <p className="mt-4 text-sm leading-7 text-[#4B5563]">{review.comment || "No review text provided."}</p>
-                <div className="mt-4 flex flex-wrap gap-2">
+                {!isParentContext && <div className="mt-4 flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() => handleReviewAction(review.id, "approve")}
@@ -3196,7 +3254,7 @@ function ReviewsPage() {
                   >
                     Delete
                   </button>
-                </div>
+                </div>}
               </div>
             ))}
           </div>
@@ -3207,6 +3265,7 @@ function ReviewsPage() {
 }
 
 function SettingsPage() {
+  const { isParentContext } = useAdminContext();
   const [settings, setSettings] = useState<SettingsRecord | null>(null);
   const [form, setForm] = useState({ storeName: "", supportEmail: "", currency: "INR", taxRate: "0.18", freeShippingThreshold: "999", maintenanceMode: false });
   const [loading, setLoading] = useState(true);
@@ -3237,6 +3296,7 @@ function SettingsPage() {
   }, []);
 
   const handleSubmit = async (event: FormEvent) => {
+    if (isParentContext) return;
     event.preventDefault();
     setSaving(true);
     try {
@@ -3267,6 +3327,7 @@ function SettingsPage() {
         <div>
           <p className="text-[11px] uppercase tracking-[0.3em] text-[#D4AF37]">Store configuration</p>
           <h2 className="mt-2 text-xl font-semibold text-[#041E42]">Settings</h2>
+          {isParentContext && <p className="mt-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#A16207]">Parent context • Read only</p>}
         </div>
       </div>
       <form className="grid gap-4 md:grid-cols-2" onSubmit={handleSubmit}>
@@ -3275,6 +3336,7 @@ function SettingsPage() {
           <input
             value={form.storeName}
             onChange={(event) => setForm((current) => ({ ...current, storeName: event.target.value }))}
+            disabled={isParentContext}
             className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
           />
         </label>
@@ -3284,6 +3346,7 @@ function SettingsPage() {
             type="email"
             value={form.supportEmail}
             onChange={(event) => setForm((current) => ({ ...current, supportEmail: event.target.value }))}
+            disabled={isParentContext}
             className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
           />
         </label>
@@ -3292,6 +3355,7 @@ function SettingsPage() {
           <input
             value={form.currency}
             onChange={(event) => setForm((current) => ({ ...current, currency: event.target.value }))}
+            disabled={isParentContext}
             className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
           />
         </label>
@@ -3302,6 +3366,7 @@ function SettingsPage() {
             step="0.01"
             value={form.taxRate}
             onChange={(event) => setForm((current) => ({ ...current, taxRate: event.target.value }))}
+            disabled={isParentContext}
             className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
           />
         </label>
@@ -3311,6 +3376,7 @@ function SettingsPage() {
             type="number"
             value={form.freeShippingThreshold}
             onChange={(event) => setForm((current) => ({ ...current, freeShippingThreshold: event.target.value }))}
+            disabled={isParentContext}
             className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
           />
         </label>
@@ -3319,11 +3385,12 @@ function SettingsPage() {
             type="checkbox"
             checked={form.maintenanceMode}
             onChange={(event) => setForm((current) => ({ ...current, maintenanceMode: event.target.checked }))}
+            disabled={isParentContext}
             className="h-4 w-4 rounded border-slate-300 text-[#041E42] focus:ring-[#D4AF37]"
           />
           <span className="font-semibold text-[#041E42]">Maintenance mode</span>
         </label>
-        <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        {!isParentContext && <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <button
             type="submit"
             disabled={saving}
@@ -3332,7 +3399,11 @@ function SettingsPage() {
             {saving ? "Saving..." : "Save settings"}
           </button>
           <p className="text-sm text-[#4B5563]">Store settings are updated instantly for administrative staff.</p>
-        </div>
+        </div>}
+        {isParentContext && <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-sm font-semibold text-[#A16207]">Parent context • Read only</span>
+          <p className="text-sm text-[#4B5563]">Read-only configuration visibility. No settings mutation is available.</p>
+        </div>}
       </form>
     </section>
   );
@@ -3340,25 +3411,47 @@ function SettingsPage() {
 
 function OrderDetailsPage() {
   const { orderId } = useParams();
+  const { isParentContext } = useAdminContext();
   const [order, setOrder] = useState<OrderRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [nextStatus, setNextStatus] = useState<string>("PENDING");
+
+  const loadOrder = async () => {
+    try {
+      setLoading(true);
+      if (!orderId) throw new Error('Missing order id');
+      const data = await fetchAdmin(`/orders/${orderId}`);
+      setOrder(data || null);
+      setNextStatus(String(data?.status || 'PENDING'));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load order');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        setLoading(true);
-        if (!orderId) throw new Error('Missing order id');
-        const data = await fetchAdmin(`/orders/${orderId}`);
-        setOrder(data || null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unable to load order');
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+    loadOrder();
   }, [orderId]);
+
+  const handleStatusUpdate = async () => {
+    if (isParentContext || !order || !orderId) return;
+    try {
+      setUpdatingStatus(true);
+      await fetchAdmin(`/orders/${order.id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: nextStatus, note: `Status changed by admin route ${order.user?.name || 'system'}` }),
+      });
+      await loadOrder();
+      toast.success('Order status updated', { className: 'luxury-toast' });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Unable to update order status', { className: 'luxury-toast' });
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
 
   if (loading) return <LoadingShell />;
   if (error) return <ErrorState message={error} />;
@@ -3371,22 +3464,41 @@ function OrderDetailsPage() {
           <div>
             <p className="text-[11px] uppercase tracking-[0.3em] text-[#D4AF37]">Order detail</p>
             <h2 className="mt-2 text-xl font-semibold text-[#041E42]">Order #{order.id}</h2>
+            {isParentContext && <p className="mt-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#A16207]">Parent context • Read only</p>}
           </div>
+          {!isParentContext && <div className="flex items-center gap-3">
+            <select value={nextStatus} onChange={(event) => setNextStatus(event.target.value)} className="rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20">
+              {VALID_ORDER_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+            </select>
+            <button type="button" onClick={handleStatusUpdate} disabled={updatingStatus} className="rounded-full border border-[#D4AF37] bg-[#FFF8E8] px-4 py-2 text-xs font-semibold text-[#041E42] hover:bg-[#F8E6A7] disabled:opacity-70">
+              {updatingStatus ? 'Updating...' : 'Update status'}
+            </button>
+          </div>}
         </div>
         <div className="mt-6 grid gap-4 md:grid-cols-3">
           <div>
+            <p className="text-sm font-semibold text-[#041E42]">Store</p>
+            <p className="mt-1 text-sm text-[#4B5563]">{order.store?.name || order.store?.slug || 'Store'}</p>
+          </div>
+          <div>
             <p className="text-sm font-semibold text-[#041E42]">Customer</p>
-            <p className="mt-1 text-sm text-[#4B5563]">{order.user?.name || 'Guest'}</p>
-            <p className="text-sm text-[#4B5563]">{order.user?.email}</p>
+            <p className="mt-1 text-sm text-[#4B5563]">{order.user?.name || order.user?.email || 'Guest'}</p>
+            <p className="text-sm text-[#4B5563]">{order.user?.email || 'No email'}</p>
           </div>
           <div>
             <p className="text-sm font-semibold text-[#041E42]">Ordered</p>
             <p className="mt-1 text-sm text-[#4B5563]">{formatDate(order.createdAt)}</p>
             <p className="text-sm text-[#4B5563]">{formatCurrency(order.totalPrice)}</p>
           </div>
+        </div>
+        <div className="mt-6 grid gap-4 md:grid-cols-3">
           <div>
-            <p className="text-sm font-semibold text-[#041E42]">Status</p>
+            <p className="text-sm font-semibold text-[#041E42]">Current status</p>
             <span className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusPill(order.status)}`}>{order.status || 'Unknown'}</span>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-[#041E42]">Order total</p>
+            <p className="mt-1 text-sm font-semibold text-[#041E42]">{formatCurrency(order.totalPrice)}</p>
           </div>
         </div>
         <div className="mt-6">
@@ -3397,9 +3509,33 @@ function OrderDetailsPage() {
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <p className="font-semibold text-[#041E42]">{item.product?.name || 'Unknown product'}</p>
+                    <p className="text-sm text-[#4B5563]">Variant: {item.variant?.name || item.variant?.sku || item.variant?.id || 'Standard variant'}</p>
                     <p className="text-sm text-[#4B5563]">Qty: {item.quantity ?? 1}</p>
+                    {item.variant?.size && <p className="text-sm text-[#4B5563]">Size: {item.variant.size}</p>}
+                    {item.variant?.color && <p className="text-sm text-[#4B5563]">Color: {item.variant.color}</p>}
                   </div>
-                  <p className="text-sm font-semibold text-[#041E42]">{formatCurrency(item.price)}</p>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-[#041E42]">{formatCurrency(item.price)}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="mt-8">
+          <p className="text-sm font-semibold text-[#041E42]">Status history</p>
+          <div className="mt-3 space-y-3">
+            {(order.statusHistory || []).map((history, index) => (
+              <div key={history.id ?? index} className="rounded-2xl border border-slate-200 bg-[#F8FAFC] p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusPill(history.status)}`}>{history.status || 'Unknown'}</span>
+                    <p className="mt-2 text-sm text-[#4B5563]">{history.note || 'Status transition update'}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm text-[#4B5563]">{formatDate(history.createdAt)}</p>
+                    <p className="text-sm text-[#4B5563]">{history.changedBy?.name || history.changedBy?.email || 'System / Admin'}</p>
+                  </div>
                 </div>
               </div>
             ))}
