@@ -242,6 +242,16 @@ function fetchAdmin(path: string, options: RequestInit = {}) {
   });
 }
 
+async function uploadProductImages(files: File[]) {
+  const body = new FormData();
+  files.forEach((file) => body.append("images", file));
+  const response = await fetchAdmin("/product-images", { method: "POST", body });
+  if (!Array.isArray(response?.images) || response.images.some((url: unknown) => typeof url !== "string" || url.startsWith("blob:"))) {
+    throw new Error("Image upload did not return persistent image paths.");
+  }
+  return response.images as string[];
+}
+
 function normalizeBrandPayload(payload: unknown): BrandRecord[] | null {
   if (Array.isArray(payload)) {
     return payload as BrandRecord[];
@@ -2569,7 +2579,16 @@ export function ProductFormPage() {
     try {
       setSaving(true);
       setError("");
-      const cleanImages = form.images.map((image) => image.url);
+      const filesToUpload = form.images.flatMap((image) => (image.file ? [image.file] : []));
+      const uploadedImages = filesToUpload.length > 0 ? await uploadProductImages(filesToUpload) : [];
+      let uploadedImageIndex = 0;
+      const cleanImages = form.images.map((image) => {
+        if (!image.file) return image.url;
+        const uploadedUrl = uploadedImages[uploadedImageIndex];
+        uploadedImageIndex += 1;
+        if (!uploadedUrl) throw new Error("One or more product images failed to upload.");
+        return uploadedUrl;
+      });
       const payload = {
         name: form.name.trim(),
         sku: form.sku.trim(),
