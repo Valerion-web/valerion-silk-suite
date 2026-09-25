@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { adminApiFetch } from "@/lib/admin-api";
+import { resolveAssetUrl } from "@/lib/api";
 import { useAdminContext } from "@/lib/admin-context";
 import {
   Search,
@@ -784,7 +785,7 @@ function ProductsGrid({ products, onOpenDrawer, selectedIds, onToggleSelect, all
           return (
             <div key={product.id} className="group overflow-hidden rounded-[20px] border border-[#E7EBF3] bg-white shadow-[0_16px_40px_-26px_rgba(15,23,42,0.08)] transition duration-200 hover:-translate-y-1 hover:shadow-[0_18px_44px_-26px_rgba(15,23,42,0.12)]">
               <div className="relative overflow-hidden rounded-t-[20px] bg-[#F8FAFC]" style={{ minHeight: 180 }}>
-                <img src={product.images?.[0] || "https://via.placeholder.com/320x180"} alt={product.name} className="h-full w-full object-cover transition duration-200 group-hover:scale-105" />
+                <img src={resolveAssetUrl(product.images?.[0] || "https://via.placeholder.com/320x180")} alt={product.name} className="h-full w-full object-cover transition duration-200 group-hover:scale-105" />
               </div>
               <div className="p-5">
                 <div className="flex items-center justify-between gap-3">
@@ -862,7 +863,7 @@ function ProductsTable({ products, selectedIds, onToggleSelect, onToggleSelectAl
                   <td className="sticky left-0 z-10 bg-inherit px-4 py-4"><input type="checkbox" checked={selectedIds.includes(product.id)} onChange={() => onToggleSelect(product.id)} className="h-4 w-4 rounded border-[#D4AF37] text-[#D4AF37] focus:ring-[#D4AF37]" /></td>
                   <td className="px-4 py-4">
                     <div className="flex h-13 w-13 items-center justify-center overflow-hidden rounded-[12px] bg-[#F8FAFC]">
-                      {product.images?.[0] ? <img src={product.images[0]} alt={product.name} className="h-full w-full object-cover" /> : <div className="text-xs uppercase tracking-[0.24em] text-[#94A3AF]">No image</div>}
+                      {product.images?.[0] ? <img src={resolveAssetUrl(product.images[0])} alt={product.name} className="h-full w-full object-cover" /> : <div className="text-xs uppercase tracking-[0.24em] text-[#94A3AF]">No image</div>}
                     </div>
                   </td>
                   <td className="px-4 py-4">
@@ -1507,7 +1508,7 @@ function RecentProducts({ products }: { products: ProductRecord[] }) {
           return (
             <div key={product.id} className="group flex items-center gap-3 rounded-[16px] border border-[#E5E7EB] bg-[#F8F9FB] p-3 transition duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-sm">
               <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-[12px] border border-[#E5E7EB] bg-white shadow-sm">
-                {product.images?.[0] ? <img src={product.images[0]} alt={product.name} className="h-full w-full object-cover transition duration-200 group-hover:scale-105" loading="lazy" /> : <Package className="h-5 w-5 text-[#6B7280]" />}
+                      {product.images?.[0] ? <img src={resolveAssetUrl(product.images[0])} alt={product.name} className="h-full w-full object-cover transition duration-200 group-hover:scale-105" loading="lazy" /> : <Package className="h-5 w-5 text-[#6B7280]" />}
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-[#111827]">{product.name || "Untitled product"}</p>
@@ -1753,7 +1754,7 @@ function LuxuryProductTable({
                   <td className="px-3 py-2"><input type="checkbox" checked={selectedIds.includes(product.id)} onChange={() => onToggleSelect(product.id)} className="h-4 w-4 rounded border-[#D4AF37] text-[#D4AF37] focus:ring-[#D4AF37]" /></td>
                   <td className="px-3 py-2">
                     <div className="flex h-[64px] w-[64px] items-center justify-center overflow-hidden rounded-[14px] border border-[#E5E7EB] bg-white shadow-sm">
-                      {product.images?.[0] ? <img src={product.images[0]} alt={product.name} className="h-full w-full object-cover" loading="lazy" /> : <Package className="h-5 w-5 text-[#6B7280]" />}
+                      {product.images?.[0] ? <img src={resolveAssetUrl(product.images[0])} alt={product.name} className="h-full w-full object-cover" loading="lazy" /> : <Package className="h-5 w-5 text-[#6B7280]" />}
                     </div>
                   </td>
                   <td className="px-3 py-2">
@@ -1861,7 +1862,7 @@ function LuxuryPreviewDrawer({ product, onClose, readOnly = false }: { product: 
         <div className="mt-5 flex-1 overflow-y-auto pr-1">
           <div className="overflow-hidden rounded-[20px] border border-[#E5E7EB] bg-[#F8F9FB] p-2">
             {product.images?.[0] ? (
-              <img src={product.images[0]} alt={product.name} className="h-64 w-full rounded-[16px] object-cover" loading="lazy" />
+              <img src={resolveAssetUrl(product.images[0])} alt={product.name} className="h-64 w-full rounded-[16px] object-cover" loading="lazy" />
             ) : (
               <div className="flex h-64 items-center justify-center rounded-[16px] text-[#6B7280]">No image available</div>
             )}
@@ -2947,7 +2948,7 @@ export function ProductFormPage() {
             <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {form.images.map((image) => (
                 <div key={image.id} className="group overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
-                  <img src={image.url} alt="Product" className="h-48 w-full object-cover" />
+                  <img src={resolveAssetUrl(image.url)} alt="Product" className="h-48 w-full object-cover" />
                   <div className="space-y-3 p-4">
                     <button
                       type="button"
@@ -3133,7 +3134,7 @@ export function ProductFormPage() {
             <div className="space-y-3">
               <p className="text-xs uppercase tracking-[0.32em] text-[#C9A227]">Preview</p>
               <div className="overflow-hidden rounded-[24px] bg-[#F8F9FB]">
-                <img src={form.images.find((image) => image.featured)?.url || form.images[0]?.url || "https://via.placeholder.com/520x320?text=No+image"} alt="Featured product" className="h-40 w-full object-cover" />
+                <img src={resolveAssetUrl(form.images.find((image) => image.featured)?.url || form.images[0]?.url || "https://via.placeholder.com/520x320?text=No+image")} alt="Featured product" className="h-40 w-full object-cover" />
               </div>
               <div>
                 <p className="text-sm uppercase tracking-[0.28em] text-[#64748B]">{form.categoryId ? categories.find((item) => item.id === form.categoryId)?.name : "No category"}</p>

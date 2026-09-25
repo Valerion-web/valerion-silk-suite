@@ -1,10 +1,17 @@
 const storeSlug = String(import.meta.env.VITE_STORE_SLUG || "haston").trim().toLowerCase();
 const apiBaseUrl = String(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+const assetBaseUrl = (apiBaseUrl || "https://api.haston.in").replace(/\/api$/i, "");
 const stateChangingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 function resolveApiUrl(input: RequestInfo | URL) {
-  if (!apiBaseUrl || typeof input !== "string" || !input.startsWith("/api")) return input;
-  return `${apiBaseUrl}${input.slice("/api".length)}`;
+  if (typeof input !== "string") return input;
+  if (input.startsWith("/api")) return apiBaseUrl ? `${apiBaseUrl}${input.slice("/api".length)}` : input;
+  if (input.startsWith("/uploads")) return `${assetBaseUrl}${input}`;
+  return input;
+}
+
+export function resolveAssetUrl(input: string) {
+  return resolveApiUrl(input) as string;
 }
 
 function getCsrfToken() {
