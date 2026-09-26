@@ -1,9 +1,45 @@
 import prisma from '../lib/prisma.js'
 import bcrypt from 'bcryptjs'
+import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import multer from 'multer'
 import { storeWhere } from '../middleware/storeMiddleware.js'
 
 const adminRoles = ['SUPER_ADMIN', 'ADMIN', 'BRAND_MANAGER', 'INVENTORY_MANAGER', 'ORDER_MANAGER', 'MARKETING_MANAGER']
 const VALID_ORDER_STATUSES = new Set(['PLACED', 'PENDING', 'PROCESSING', 'PACKED', 'SHIPPED', 'DELIVERED', 'CANCELLED'])
+
+const productUploadDirectory = path.resolve(process.cwd(), 'uploads', 'products')
+const productImageUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, callback) => {
+      fs.mkdirSync(productUploadDirectory, { recursive: true })
+      callback(null, productUploadDirectory)
+    },
+    filename: (_req, file, callback) => {
+      const extension = path.extname(file.originalname).toLowerCase() || '.bin'
+      callback(null, `${Date.now()}-${crypto.randomUUID()}${extension}`)
+    },
+  }),
+  fileFilter: (_req, file, callback) => {
+    callback(null, file.mimetype.startsWith('image/'))
+  },
+  limits: { files: 10, fileSize: 10 * 1024 * 1024 },
+})
+
+export const uploadProductImages = productImageUpload.array('images', 10)
+
+export const createProductImageUpload = (req, res, next) => {
+  const files = Array.isArray(req.files) ? req.files : []
+  if (files.length === 0) {
+    res.status(400)
+    return next(new Error('At least one image file is required'))
+  }
+
+  return res.status(201).json({
+    images: files.map((file) => `/uploads/products/${file.filename}`),
+  })
+}
 
 const storeScope = (req, where = {}) => {
   return storeWhere(req, where)
@@ -287,7 +323,7 @@ export const createAdminProduct = async (req, res, next) => {
         res.status(400)
         throw new Error('Category does not belong to selected store')
       }
-      data.category = { connect: { id: parsedCategoryId } }
+      data.categoryId = parsedCategoryId
     }
 
     if (brandId !== undefined && brandId !== null && brandId !== '') {
@@ -302,7 +338,7 @@ export const createAdminProduct = async (req, res, next) => {
         throw new Error('Brand does not belong to selected store')
       }
       data.brand = selectedBrand.name
-      data.brandRelation = { connect: { id: parsedBrandId } }
+      data.brandId = parsedBrandId
     }
 
     const createdProduct = await prisma.product.create({ data, include: { category: true } })
@@ -385,7 +421,7 @@ export const updateAdminProduct = async (req, res, next) => {
           res.status(400)
           throw new Error('Category ID must be a number')
         }
-        data.category = { connect: { id: parsedCategoryId } }
+        data.categoryId = parsedCategoryId
       }
     }
 
@@ -404,7 +440,7 @@ export const updateAdminProduct = async (req, res, next) => {
           throw new Error('Brand does not belong to selected store')
         }
         data.brand = selectedBrand.name
-        data.brandRelation = { connect: { id: parsedBrandId } }
+        data.brandId = parsedBrandId
       }
     }
 

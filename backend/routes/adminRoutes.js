@@ -43,6 +43,8 @@ import {
   exportAdminReport,
   getAdminInventoryHistory,
   getAdminOrderById,
+  uploadProductImages,
+  createProductImageUpload,
 } from '../controllers/adminController.js'
 
 const router = express.Router()
@@ -53,6 +55,7 @@ router.get('/analytics', requireCapability('analytics'), getAdminAnalytics)
 router.get('/stores', requireCapability('analytics'), getAdminStores)
 router.get('/recent-orders', requireCapability('orders'), getRecentOrders)
 router.post('/products/bulk-import', requireCapability('products'), requireConcreteStore, receiveBulkProductImportFiles, validateBulkProductImportRequest)
+router.post('/product-images', requireCapability('products'), requireConcreteStore, uploadProductImages, createProductImageUpload)
 router.route('/products').get(requireCapability('products'), getAdminProducts).post(requireCapability('products'), requireConcreteStore, createAdminProduct)
 router.route('/products/:id').get(requireCapability('products'), getAdminProductById).put(requireCapability('products'), requireConcreteStore, updateAdminProduct).delete(requireCapability('products'), requireConcreteStore, deleteAdminProduct)
 router.route('/orders').get(requireCapability('orders'), getAdminOrders)
