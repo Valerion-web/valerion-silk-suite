@@ -1,7 +1,8 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
+import Modal from "@/components/admin/ui/Modal";
 import {
   Search,
   Grid,
@@ -228,6 +229,180 @@ function deriveInventoryStatus(count: number, lowThreshold: number) {
 function formatCurrency(value: number | string | undefined) {
   const numeric = typeof value === "number" ? value : Number(value || 0);
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(numeric);
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const bulkTemplateHeaders = [
+  "name", "sku", "slug", "shortDescription", "fullDescription", "description", "price", "discountPercent", "tax",
+  "countInStock", "lowStockAlert", "availability", "warehouse", "category", "brand", "collection", "tags", "size",
+  "color", "material", "status", "metaTitle", "metaDescription", "keywords", "images",
+];
+
+const bulkTemplateExample: Record<string, string> = {
+  name: "Example Product",
+  sku: "HST001",
+  slug: "example-product",
+  price: "145",
+  countInStock: "10",
+  lowStockAlert: "2",
+  availability: "IN_STOCK",
+  warehouse: "Main",
+  category: "Example Category",
+  brand: "Example Brand",
+  status: "DRAFT",
+  images: "HST001-1.jpg|HST001-2.jpg",
+};
+
+type BulkPreviewRow = {
+  rowNumber: number;
+  values: Record<string, string>;
+  errors: string[];
+  warnings: string[];
+};
+
+type BulkImportRow = {
+  rowNumber: number;
+  sku: string | null;
+  slug: string | null;
+  status: string;
+  productId?: number;
+  images?: string[];
+  errors: string[];
+  warnings: string[];
+};
+
+type BulkImportResult = {
+  summary: { total: number; valid: number; failed: number; created: number };
+  rows: BulkImportRow[];
+};
+
+function isBulkImportResult(value: unknown): value is BulkImportResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Partial<BulkImportResult>;
+  return Boolean(
+    result.summary
+    && typeof result.summary.total === "number"
+    && typeof result.summary.valid === "number"
+    && typeof result.summary.failed === "number"
+    && typeof result.summary.created === "number"
+    && Array.isArray(result.rows)
+    && result.rows.every((row) => row && typeof row.rowNumber === "number" && typeof row.status === "string" && Array.isArray(row.errors) && Array.isArray(row.warnings))
+  );
+}
+
+const bulkRequiredFields = ["name", "sku", "slug", "price", "countInStock", "category", "brand"];
+const bulkNumericFields = ["price", "discountPercent", "tax", "countInStock", "lowStockAlert"];
+const bulkStatuses = new Set(["ACTIVE", "DRAFT", "ARCHIVED"]);
+const bulkAvailabilities = new Set(["IN_STOCK", "LOW_STOCK", "OUT_OF_STOCK"]);
+const bulkHeaderAliases: Record<string, string> = {
+  productname: "name",
+  productsku: "sku",
+  categoryname: "category",
+  brandname: "brand",
+  countinstock: "countInStock",
+  lowstockalert: "lowStockAlert",
+  discountpercent: "discountPercent",
+  fulldescription: "fullDescription",
+  shortdescription: "shortDescription",
+  metatitle: "metaTitle",
+  metadescription: "metaDescription",
+};
+
+function normalizeBulkHeader(value: unknown) {
+  return String(value ?? "").replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function canonicalizeBulkHeader(value: unknown) {
+  const normalized = normalizeBulkHeader(value);
+  return bulkHeaderAliases[normalized] || bulkTemplateHeaders.find((field) => normalizeBulkHeader(field) === normalized) || normalized;
+}
+
+function normalizeBulkValue(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function downloadBulkTemplate() {
+  const escapeCsvCell = (value: string) => /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+  const exampleRow = bulkTemplateHeaders.map((field) => escapeCsvCell(bulkTemplateExample[field] || ""));
+  const blob = new Blob([`${bulkTemplateHeaders.join(",")}\n${exampleRow.join(",")}\n`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "haston-products-template.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function parseBulkProductFile(file: File, categoryNames: string[], brandNames: string[]): Promise<BulkPreviewRow[]> {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", raw: false });
+  const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+  if (!firstSheet) throw new Error("The selected file contains no worksheet.");
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1, defval: "", raw: false });
+  const headers = (matrix[0] || []).map(canonicalizeBulkHeader);
+  if (!headers.length || !headers.some((header) => bulkTemplateHeaders.includes(header))) {
+    throw new Error("The first row must contain product template column names.");
+  }
+  const categorySet = new Set(categoryNames.map((name) => name.trim().toLowerCase()));
+  const brandSet = new Set(brandNames.map((name) => name.trim().toLowerCase()));
+  const rows = matrix.slice(1).map((cells, index) => {
+    const rowNumber = index + 2;
+    const errors: string[] = [];
+    const values: Record<string, string> = Object.fromEntries(bulkTemplateHeaders.map((field) => {
+      const columnIndex = headers.findIndex((header) => header === field);
+      const address = columnIndex >= 0 ? XLSX.utils.encode_cell({ r: rowNumber - 1, c: columnIndex }) : "";
+      const cell = address ? firstSheet[address] as { f?: string; t?: string; v?: unknown; z?: string; w?: string } | undefined : undefined;
+      if (bulkNumericFields.includes(field) && cell?.f) valuesIssue(errors, `${field} contains a formula; enter a literal number`);
+      const dateFormat = String(cell?.z || "").toLowerCase();
+      if (bulkNumericFields.includes(field) && (cell?.t === "d" || (typeof cell?.v === "number" && /[ymdhis]/.test(dateFormat)))) {
+        valuesIssue(errors, `${field} contains a date; enter a literal number`);
+      }
+      return [field, normalizeBulkValue(cell?.w ?? (columnIndex >= 0 ? cells[columnIndex] : ""))];
+    }));
+    return { rowNumber, values, errors, warnings: [] as string[] };
+  }).filter(({ values }) => Object.values(values).some(Boolean));
+
+  const counts = (field: string) => rows.reduce((result, row) => {
+    const value = row.values[field].toLowerCase();
+    if (value) result.set(value, (result.get(value) || 0) + 1);
+    return result;
+  }, new Map<string, number>());
+  const skuCounts = counts("sku");
+  const slugCounts = counts("slug");
+
+  rows.forEach(({ values, errors, warnings }) => {
+    bulkRequiredFields.forEach((field) => { if (!values[field]) errors.push(`${field} is required`); });
+    bulkNumericFields.forEach((field) => { if (values[field] && !Number.isFinite(Number(values[field]))) errors.push(`${field} must be numeric`); });
+    if (values.price && Number(values.price) <= 0) errors.push("price must be greater than zero");
+    ["discountPercent", "tax", "countInStock", "lowStockAlert"].forEach((field) => { if (values[field] && Number(values[field]) < 0) errors.push(`${field} cannot be negative`); });
+    if (values.status && !bulkStatuses.has(values.status.toUpperCase())) errors.push("status must be ACTIVE, DRAFT, or ARCHIVED");
+    if (values.availability && !bulkAvailabilities.has(values.availability.toUpperCase())) errors.push("availability must be IN_STOCK, LOW_STOCK, or OUT_OF_STOCK");
+    if (values.category && !categorySet.has(values.category.toLowerCase())) errors.push(`category \"${values.category}\" was not found`);
+    if (values.brand && !brandSet.has(values.brand.toLowerCase())) errors.push(`brand \"${values.brand}\" was not found`);
+    if (values.sku && skuCounts.get(values.sku.toLowerCase())! > 1) errors.push("duplicate SKU in file");
+    if (values.slug && slugCounts.get(values.slug.toLowerCase())! > 1) errors.push("duplicate slug in file");
+    if (!values.images) warnings.push("No images referenced");
+    else {
+      const imageNames = values.images.split("|").map((name) => name.trim());
+      if (imageNames.some((name) => !name)) errors.push("images contains an empty filename entry");
+      imageNames.filter(Boolean).forEach((name) => {
+        if (/^blob:/i.test(name)) errors.push(`images contains a blob URL: ${name}`);
+        else if (/^https?:\/\//i.test(name)) errors.push(`images must contain filenames, not URLs: ${name}`);
+        else if (/(^|[\\/])\.\.([\\/]|$)/.test(name)) errors.push(`images contains a path traversal value: ${name}`);
+        else if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i.test(name)) errors.push(`images contains an invalid image filename: ${name}`);
+      });
+    }
+  });
+  return rows;
+}
+
+function valuesIssue(errors: string[], message: string) {
+  if (!errors.includes(message)) errors.push(message);
 }
 
 function fetchAdmin(path: string, options: RequestInit = {}) {
@@ -1901,6 +2076,212 @@ function LuxuryPreviewDrawer({ product, onClose }: { product: ProductRecord | nu
   );
 }
 
+function BulkProductImportModal({
+  open,
+  onClose,
+  onImported,
+  categoryNames,
+  brandNames,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onImported: () => void;
+  categoryNames: string[];
+  brandNames: string[];
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const zipInputRef = useRef<HTMLInputElement>(null);
+  const importInProgress = useRef(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [previewRows, setPreviewRows] = useState<BulkPreviewRow[]>([]);
+  const [fileError, setFileError] = useState("");
+  const [zipError, setZipError] = useState("");
+  const [parseError, setParseError] = useState("");
+  const [importError, setImportError] = useState("");
+  const [importResult, setImportResult] = useState<BulkImportResult | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isZipDragging, setIsZipDragging] = useState(false);
+  const validRowCount = previewRows.filter((row) => row.errors.length === 0).length;
+
+  const selectFile = async (candidate?: File) => {
+    if (!candidate || isImporting) return;
+    if (!/\.(csv|xlsx)$/i.test(candidate.name)) {
+      setFile(null);
+      setFileError("Choose a CSV or XLSX file to continue.");
+      setPreviewRows([]);
+      return;
+    }
+    setFile(candidate);
+    setFileError("");
+    setParseError("");
+    setImportError("");
+    setImportResult(null);
+    setPreviewRows([]);
+    setIsParsing(true);
+    try {
+      setPreviewRows(await parseBulkProductFile(candidate, categoryNames, brandNames));
+    } catch (error) {
+      setParseError(error instanceof Error ? error.message : "Unable to read this file.");
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const selectZip = (candidate?: File) => {
+    if (!candidate || isImporting) return;
+    setImportError("");
+    setImportResult(null);
+    if (!candidate.size || !/\.zip$/i.test(candidate.name)) {
+      setZipFile(null);
+      setZipError(candidate.size ? "Choose a ZIP file to continue." : "The selected ZIP file is empty.");
+      return;
+    }
+    setZipError("");
+    setZipFile(candidate);
+  };
+
+  const clearFile = () => {
+    if (isImporting) return;
+    setFile(null);
+    setFileError("");
+    setParseError("");
+    setPreviewRows([]);
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
+  const clearZip = () => {
+    if (isImporting) return;
+    setZipFile(null);
+    setZipError("");
+    if (zipInputRef.current) zipInputRef.current.value = "";
+  };
+
+  const canImport = Boolean(file && zipFile && previewRows.length > 0 && validRowCount === previewRows.length
+    && !fileError && !zipError && !parseError && !isParsing && !isImporting);
+
+  const handleImport = async () => {
+    if (!canImport || !file || !zipFile || importInProgress.current) return;
+    importInProgress.current = true;
+    setIsImporting(true);
+    setImportError("");
+    setImportResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("productFile", file);
+      formData.append("imagesZip", zipFile);
+      const response: unknown = await fetchAdmin("/products/bulk-import", { method: "POST", body: formData });
+      if (!isBulkImportResult(response)) throw new Error("Bulk import returned an unexpected response.");
+      setImportResult(response);
+      if (response.summary.created > 0) {
+        onImported();
+        setFile(null);
+        setZipFile(null);
+        setPreviewRows([]);
+        if (inputRef.current) inputRef.current.value = "";
+        if (zipInputRef.current) zipInputRef.current.value = "";
+      }
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Bulk product import failed.");
+    } finally {
+      importInProgress.current = false;
+      setIsImporting(false);
+    }
+  };
+
+  const closeModal = () => {
+    if (isImporting) return;
+    clearFile();
+    clearZip();
+    setImportError("");
+    setImportResult(null);
+    onClose();
+  };
+
+  return (
+    <Modal open={open} title="Bulk Add Products" onClose={closeModal} scrollable footer={
+      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs text-[#64748B]" aria-live="polite">
+          {isImporting ? "Importing products and images..." : importResult ? `${importResult.summary.created} products created.` : "Import is available when both files pass validation."}
+        </p>
+        <button type="button" onClick={importResult?.summary.created ? closeModal : () => void handleImport()}
+          disabled={!canImport && !importResult?.summary.created}
+          className="inline-flex h-[44px] items-center justify-center rounded-[14px] bg-[#0F172A] px-5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40">
+          {isImporting ? "Importing..." : importResult?.summary.created ? "Done" : "Import products"}
+        </button>
+      </div>
+    }>
+      <div className="space-y-5">
+        <div className="flex flex-col gap-3 rounded-[18px] border border-[#E5E7EB] bg-[#F8F9FB] p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-[#111827]">Start with the HASTON template</p>
+            <p className="mt-1 text-xs leading-5 text-[#64748B]">Use image filenames such as HST001-1.jpg|HST001-2.jpg and include the exact files in the ZIP.</p>
+          </div>
+          <button type="button" onClick={downloadBulkTemplate} className="inline-flex h-[42px] shrink-0 items-center justify-center gap-2 rounded-[14px] border border-[#D4AF37] bg-white px-4 text-sm font-semibold text-[#0F172A] hover:bg-[#FFF8E8]">
+            <Download className="h-4 w-4" /> Download template
+          </button>
+        </div>
+
+        <div role="button" tabIndex={0} onClick={() => inputRef.current?.click()}
+          onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") inputRef.current?.click(); }}
+          onDragEnter={(event) => { event.preventDefault(); setIsDragging(true); }}
+          onDragOver={(event) => event.preventDefault()} onDragLeave={() => setIsDragging(false)}
+          onDrop={(event) => { event.preventDefault(); setIsDragging(false); void selectFile(event.dataTransfer.files?.[0]); }}
+          className={`cursor-pointer rounded-[18px] border border-dashed p-6 text-center transition ${isDragging ? "border-[#D4AF37] bg-[#FFF8E8]" : "border-[#CBD5E1] bg-white hover:border-[#D4AF37]"}`}>
+          <input ref={inputRef} type="file" accept=".csv,.xlsx" className="hidden" onChange={(event) => void selectFile(event.target.files?.[0])} />
+          <Upload className="mx-auto h-5 w-5 text-[#0F172A]" />
+          <p className="mt-3 text-sm font-semibold text-[#111827]">{file ? file.name : "Choose or drop a CSV/XLSX product file"}</p>
+          <p className="mt-1 text-xs text-[#64748B]">{file ? `${formatFileSize(file.size)} · ${isParsing ? "Reading..." : "Ready for preview"}` : "CSV and Excel workbooks are parsed locally."}</p>
+          {file && <button type="button" onClick={(event) => { event.stopPropagation(); clearFile(); }} className="mt-2 text-xs font-semibold text-rose-700">Remove product file</button>}
+        </div>
+
+        <div className="space-y-3 rounded-[18px] border border-[#E5E7EB] bg-white p-4">
+          <div>
+            <p className="text-sm font-semibold text-[#111827]">Product images ZIP</p>
+            <p className="mt-1 text-xs leading-5 text-[#64748B]">The ZIP is uploaded with the spreadsheet when you import.</p>
+          </div>
+          <div role="button" tabIndex={0} onClick={() => zipInputRef.current?.click()}
+            onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") zipInputRef.current?.click(); }}
+            onDragEnter={(event) => { event.preventDefault(); setIsZipDragging(true); }}
+            onDragOver={(event) => event.preventDefault()} onDragLeave={() => setIsZipDragging(false)}
+            onDrop={(event) => { event.preventDefault(); setIsZipDragging(false); selectZip(event.dataTransfer.files?.[0]); }}
+            className={`cursor-pointer rounded-[16px] border border-dashed p-5 text-center transition ${isZipDragging ? "border-[#D4AF37] bg-[#FFF8E8]" : "border-[#CBD5E1] bg-[#F8F9FB] hover:border-[#D4AF37]"}`}>
+            <input ref={zipInputRef} type="file" accept=".zip" className="hidden" onChange={(event) => selectZip(event.target.files?.[0])} />
+            <p className="text-sm font-semibold text-[#111827]">{zipFile ? `${zipFile.name} · ${formatFileSize(zipFile.size)}` : "Choose or drop an images ZIP"}</p>
+          </div>
+          {zipFile && <button type="button" onClick={clearZip} className="text-xs font-semibold text-rose-700">Remove images ZIP</button>}
+        </div>
+
+        {(fileError || zipError || parseError || importError) && <p role="alert" className="rounded-[14px] border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{importError || fileError || zipError || parseError}</p>}
+
+        {importResult && <div role="status" aria-live="polite" className="space-y-2 rounded-[18px] border border-emerald-200 bg-emerald-50 p-4">
+          <p className="text-sm font-semibold text-[#111827]">Import result</p>
+          <p className="text-xs text-[#475569]">Total: {importResult.summary.total} · Valid: {importResult.summary.valid} · Failed: {importResult.summary.failed} · Created: {importResult.summary.created}</p>
+          {importResult.rows.map((row) => <p key={`${row.rowNumber}-${row.sku || row.slug || "row"}`} className="text-xs text-[#475569]">Row {row.rowNumber}: {row.sku || row.slug || "Product"} · {row.status}{row.errors.length ? ` · ${row.errors.join("; ")}` : ""}{row.warnings.length ? ` · ${row.warnings.join("; ")}` : ""}</p>)}
+        </div>}
+
+        <div className="rounded-[18px] border border-[#E5E7EB] bg-[#F8F9FB] p-4">
+          <p className="text-sm font-semibold text-[#111827]">Preview and validation</p>
+          <p className="mt-1 text-xs text-[#64748B]">Rows: {previewRows.length} · Valid: {validRowCount} · Errors: {previewRows.length - validRowCount} · Images ZIP: {zipFile ? "Ready" : "Not selected"}</p>
+        </div>
+
+        {previewRows.length > 0 && <div className="max-h-[280px] overflow-auto rounded-[18px] border border-[#E5E7EB] bg-white">
+          <table className="min-w-full text-left text-xs">
+            <thead className="sticky top-0 bg-[#F8F9FB] text-[10px] uppercase tracking-[0.16em] text-[#64748B]"><tr><th className="px-3 py-3">Row</th><th className="px-3 py-3">Product</th><th className="px-3 py-3">SKU</th><th className="px-3 py-3">Category</th><th className="px-3 py-3">Brand</th><th className="px-3 py-3">Images</th><th className="px-3 py-3">Validation</th></tr></thead>
+            <tbody>{previewRows.map((row) => <tr key={row.rowNumber} className={`border-t ${row.errors.length ? "bg-rose-50/60" : row.warnings.length ? "bg-amber-50/60" : "bg-white"}`}>
+              <td className="px-3 py-3">{row.rowNumber}</td><td className="px-3 py-3">{row.values.name || "—"}</td><td className="px-3 py-3">{row.values.sku || "—"}</td><td className="px-3 py-3">{row.values.category || "—"}</td><td className="px-3 py-3">{row.values.brand || "—"}</td><td className="px-3 py-3">{row.values.images || "—"}</td>
+              <td className="min-w-[220px] px-3 py-3">{row.errors.length ? row.errors.join("; ") : row.warnings.length ? row.warnings.join("; ") : "Ready"}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>}
+        <p className="text-xs leading-5 text-[#64748B]">Category and brand values must match names available to the selected store. Required fields, numbers, references, duplicate SKUs/slugs, and image filenames are checked before import.</p>
+      </div>
+    </Modal>
+  );
+}
+
 export function ProductsPage(): JSX.Element {
   const navigate = useNavigate();
   const [products, setProducts] = useState<ProductRecord[]>([]);
@@ -1923,6 +2304,8 @@ export function ProductsPage(): JSX.Element {
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(6);
+  const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
+  const [productsRefreshVersion, setProductsRefreshVersion] = useState(0);
 
   useEffect(() => {
     const load = async () => {
@@ -1944,7 +2327,7 @@ export function ProductsPage(): JSX.Element {
       }
     };
     void load();
-  }, []);
+  }, [productsRefreshVersion]);
 
   useEffect(() => {
     setPage(1);
@@ -2210,7 +2593,7 @@ export function ProductsPage(): JSX.Element {
         <LuxuryProductsHeader
           selectedCount={selectedIds.length}
           onCreate={() => navigate("/admin/products/add")}
-          onImport={() => document.getElementById("admin-import-input")?.click()}
+          onImport={() => setIsBulkImportOpen(true)}
           onExport={() => void handleExport("csv")}
         />
 
@@ -2350,7 +2733,13 @@ export function ProductsPage(): JSX.Element {
         />
       </motion.div>
 
-      <input id="admin-import-input" type="file" accept=".csv,.xlsx" className="hidden" onChange={() => toast.success("Import file selected")} />
+      <BulkProductImportModal
+        open={isBulkImportOpen}
+        onClose={() => setIsBulkImportOpen(false)}
+        onImported={() => setProductsRefreshVersion((version) => version + 1)}
+        categoryNames={categoryOptions}
+        brandNames={brandOptions}
+      />
 
       <LuxuryPreviewDrawer product={drawerProduct} onClose={() => setDrawerProduct(null)} />
     </div>
