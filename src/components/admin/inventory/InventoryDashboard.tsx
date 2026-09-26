@@ -31,7 +31,6 @@ import {
   YAxis,
 } from "recharts";
 import { toast } from "sonner";
-import { products as storefrontProducts } from "@/data/products";
 import InventoryTable from "./InventoryTable";
 import type { InventoryItem, SortKey } from "./types";
 
@@ -68,42 +67,70 @@ const deriveStatus = (stock: number, reorderLevel: number) => {
   return "IN_STOCK" as const;
 };
 
-const buildSeedInventory = (): InventoryItem[] =>
-  storefrontProducts.slice(0, 16).map((product, index) => {
-    const currentStock = 26 + index * 4;
-    const reservedStock = index % 4 === 0 ? 5 : index % 3 === 0 ? 3 : 1;
-    const reorderLevel = 10 + (index % 5);
-    const warehouse = warehouseOptions[index % warehouseOptions.length];
-    const now = new Date();
-    now.setDate(now.getDate() - index * 2);
+type AdminInventoryProduct = {
+  id: number;
+  name?: string | null;
+  sku?: string | null;
+  countInStock?: number | null;
+  reservedStock?: number | null;
+  lowStockAlert?: number | null;
+  stockStatus?: string | null;
+  lastUpdated?: string | null;
+  image?: string | null;
+  category?: { name?: string | null } | null;
+  warehouse?: string | null;
+  price?: number | null;
+};
+
+function normalizeInventoryResponse(payload: unknown): InventoryItem[] {
+  if (!payload || typeof payload !== "object" || !Array.isArray((payload as { items?: unknown }).items)) {
+    throw new Error("Inventory response was invalid.");
+  }
+
+  const response = payload as { items: unknown[]; lowStockThreshold?: number };
+  const defaultReorderLevel = Number(response.lowStockThreshold) || 10;
+  return response.items.map((value) => {
+    if (!value || typeof value !== "object") throw new Error("Inventory response contained an invalid product.");
+    const product = value as AdminInventoryProduct;
+    const currentStock = Number(product.countInStock ?? 0);
+    const reorderLevel = Number(product.lowStockAlert ?? defaultReorderLevel);
+    const status = product.stockStatus === "IN_STOCK" || product.stockStatus === "LOW_STOCK" || product.stockStatus === "OUT_OF_STOCK"
+      ? product.stockStatus
+      : deriveStatus(currentStock, reorderLevel);
 
     return {
-      id: 2000 + index,
+      id: Number(product.id),
       productId: String(product.id),
-      name: product.name,
-      sku: `HV-${String(index + 1).padStart(3, "0")}`,
-      category: product.category,
-      warehouse,
+      name: product.name || "Unnamed product",
+      sku: product.sku || "",
+      category: product.category?.name || "Uncategorized",
+      warehouse: product.warehouse || "Main",
       currentStock,
-      reservedStock,
+      reservedStock: Number(product.reservedStock ?? 0),
       reorderLevel,
-      unitCost: Math.round(product.price * 0.64),
-      price: product.price,
-      image: typeof product.image === "string" ? product.image : undefined,
-      status: deriveStatus(currentStock, reorderLevel),
-      lastUpdated: now.toISOString(),
-      history: [
-        {
-          id: Date.now() + index,
-          type: "create",
-          quantity: currentStock,
-          note: "Seeded inventory item",
-          timestamp: now.toISOString(),
-          warehouse,
-        },
-      ],
+      unitCost: 0,
+      price: Number(product.price ?? 0),
+      image: product.image || undefined,
+      status,
+      lastUpdated: product.lastUpdated || "",
+      history: [],
     };
   });
+}
+
+function fetchAdmin(path: string, options: RequestInit = {}) {
+  const token = typeof window !== "undefined" ? window.localStorage.getItem("valerion.token") : null;
+  const headers = new Headers(options.headers || {});
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (!headers.has("Content-Type") && options.body && typeof options.body === "string") {
+    headers.set("Content-Type", "application/json");
+  }
+  return fetch(`/api/admin${path}`, { ...options, headers }).then(async (response) => {
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data?.message || "Admin request failed");
+    return data;
+  });
+}
 
 const defaultValueTrend = [
   { month: "Jan", value: 1260000 },
@@ -493,7 +520,7 @@ const tooltipStyle = {
 };
 
 export default function InventoryDashboard() {
-  const [inventory, setInventory] = useState<InventoryItem[]>(() => buildSeedInventory());
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [pageSearch, setPageSearch] = useState("");
   const [tableSearch, setTableSearch] = useState("");
   const [warehouseFilter, setWarehouseFilter] = useState("all");
@@ -507,13 +534,39 @@ export default function InventoryDashboard() {
   const [chartRange, setChartRange] = useState<"monthly" | "quarterly" | "yearly">("monthly");
   const [isLoading, setIsLoading] = useState(true);
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [reloadVersion, setReloadVersion] = useState(0);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setIsLoading(false), 240);
-    return () => window.clearTimeout(timer);
-  }, []);
+    let cancelled = false;
+    const loadInventory = async () => {
+      setIsLoading(true);
+      setLoadError("");
+      try {
+        const payload = await fetchAdmin("/inventory");
+        const items = normalizeInventoryResponse(payload);
+        if (!cancelled) setInventory(items);
+      } catch (error) {
+        if (!cancelled) setLoadError(error instanceof Error ? error.message : "Unable to load inventory.");
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    void loadInventory();
+    return () => { cancelled = true; };
+  }, [reloadVersion]);
 
   useEffect(() => setPage(1), [tableSearch, warehouseFilter, categoryFilter, statusFilter, pageSize]);
+
+  const inventoryWarehouseOptions = useMemo(
+    () => Array.from(new Set([...warehouseOptions, ...inventory.map((item) => item.warehouse)])),
+    [inventory]
+  );
+  const inventoryCategoryOptions = useMemo(
+    () => Array.from(new Set([...categoryOptions, ...inventory.map((item) => item.category)])),
+    [inventory]
+  );
 
   const filteredInventory = useMemo(() => {
     const normalized = tableSearch.trim().toLowerCase();
@@ -560,18 +613,17 @@ export default function InventoryDashboard() {
 
   const stats = useMemo(() => {
     const totalUnits = inventory.reduce((sum, item) => sum + item.currentStock, 0);
-    const inventoryValue = inventory.reduce((sum, item) => sum + item.currentStock * item.unitCost, 0);
     const inStock = inventory.filter((item) => item.status === "IN_STOCK").length;
     const lowStock = inventory.filter((item) => item.status === "LOW_STOCK").length;
     const outOfStock = inventory.filter((item) => item.status === "OUT_OF_STOCK").length;
-    return { totalSkus: inventory.length, totalUnits, inventoryValue, inStock, lowStock, outOfStock };
+    return { totalSkus: inventory.length, totalUnits, inStock, lowStock, outOfStock };
   }, [inventory]);
 
   const cardStats = useMemo(
     () => [
       { title: "Total Products", value: stats.totalSkus.toString(), delta: "+4.8%", color: baseColors.blue, sparkline: [12, 14, 13, 16, 18, 17], icon: <Sparkles className="h-5 w-5" /> },
       { title: "Total Units", value: stats.totalUnits.toString(), delta: "+3.2%", color: baseColors.green, sparkline: [14, 16, 15, 18, 20, 19], icon: <Layers className="h-5 w-5" /> },
-      { title: "Inventory Value", value: formatCurrency(stats.inventoryValue), delta: "+8.9%", color: baseColors.gold, sparkline: [18, 24, 22, 30, 29, 36], icon: <PieIcon className="h-5 w-5" /> },
+      { title: "Inventory Value", value: "N/A", delta: "+8.9%", color: baseColors.gold, sparkline: [18, 24, 22, 30, 29, 36], icon: <PieIcon className="h-5 w-5" /> },
       { title: "In Stock", value: stats.inStock.toString(), delta: "+2.1%", color: baseColors.green, sparkline: [11, 13, 15, 17, 16, 18], icon: <ShieldCheck className="h-5 w-5" /> },
       { title: "Low Stock", value: stats.lowStock.toString(), delta: "-1.7%", color: baseColors.orange, sparkline: [12, 10, 9, 8, 7, 6], icon: <LineIcon className="h-5 w-5" /> },
       { title: "Out of Stock", value: stats.outOfStock.toString(), delta: "-0.8%", color: baseColors.red, sparkline: [8, 7, 6, 5, 4, 3], icon: <FilePlus className="h-5 w-5" /> },
@@ -639,6 +691,20 @@ export default function InventoryDashboard() {
             ))}
           </div>
           <div className="h-[620px] rounded-[18px] bg-[#E7EBF3]" />
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-[#F8FAFC] px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-[1440px] rounded-[18px] border border-rose-200 bg-white p-6 shadow-sm">
+          <p className="text-sm font-semibold text-[#0A1931]">Unable to load inventory</p>
+          <p role="alert" className="mt-2 text-sm text-rose-700">{loadError}</p>
+          <button type="button" onClick={() => setReloadVersion((version) => version + 1)} className="mt-4 inline-flex items-center gap-2 rounded-[12px] border border-[#E7EBF3] px-4 py-2 text-sm font-semibold text-[#0A1931] hover:border-[#2563EB]">
+            <RefreshCw className="h-4 w-4" /> Retry
+          </button>
         </div>
       </div>
     );
@@ -723,8 +789,8 @@ export default function InventoryDashboard() {
                 }}
                 menuOpenId={menuOpenId}
                 onMenuToggle={setMenuOpenId}
-                warehouseOptions={warehouseOptions}
-                categoryOptions={categoryOptions}
+                warehouseOptions={inventoryWarehouseOptions}
+                categoryOptions={inventoryCategoryOptions}
               />
             </div>
           </div>

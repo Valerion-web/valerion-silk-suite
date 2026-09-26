@@ -1056,7 +1056,10 @@ const getInventoryStatus = (countInStock, threshold) => {
 const formatInventoryItem = (product, threshold) => ({
   id: product.id,
   name: product.name,
-  sku: product.slug || `SKU-${product.id}`,
+  sku: product.sku || '',
+  warehouse: product.warehouse,
+  price: Number(product.price || 0),
+  lowStockAlert: Number(product.lowStockAlert ?? threshold),
   countInStock: Number(product.countInStock || 0),
   reservedStock: 0,
   availableStock: Number(product.countInStock || 0),
