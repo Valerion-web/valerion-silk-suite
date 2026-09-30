@@ -1,8 +1,11 @@
 import 'dotenv/config'
+import crypto from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import prisma from '../lib/prisma.js'
 import { ADMIN_ROLES, resolveAdminContext } from '../middleware/adminContext.js'
+import { verifyGoogleIdToken } from '../services/googleIdentityService.js'
+import { GOOGLE_NONCE_TTL_MS, googleNonceStore } from '../services/googleNonceStore.js'
 
 const getJwtSecret = () => {
   const secret = process.env.JWT_SECRET?.trim()
@@ -50,6 +53,56 @@ const setAuthCookie = (res, token) => {
     maxAge: 7 * 24 * 60 * 60 * 1000,
   })
 }
+
+const googleNonceCookieOptions = () => {
+  const isProduction = process.env.NODE_ENV === 'production'
+  return {
+    ...(isProduction ? { domain: '.haston.in' } : {}),
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge: GOOGLE_NONCE_TTL_MS,
+    path: '/api/auth/google',
+  }
+}
+
+const getRequestCookie = (req, name) => {
+  const cookieHeader = req.headers.cookie
+  if (typeof cookieHeader !== 'string') return null
+
+  const cookie = cookieHeader.split(';').map((entry) => entry.trim()).find((entry) => entry.startsWith(`${name}=`))
+  if (!cookie) return null
+
+  try {
+    return decodeURIComponent(cookie.slice(name.length + 1))
+  } catch {
+    return null
+  }
+}
+
+const clearGoogleNonceCookie = (res) => {
+  const { maxAge, ...options } = googleNonceCookieOptions()
+  res.clearCookie('google_login_nonce', options)
+}
+
+const isHastonStoreContext = (req) => req.contextType === 'STORE' && req.store?.slug === 'haston' && Number.isInteger(req.store.id)
+
+export const createGoogleLoginNonceHandler = ({ nonceStore = googleNonceStore } = {}) => (req, res) => {
+  if (!process.env.GOOGLE_CLIENT_ID?.trim()) {
+    return res.status(503).json({ message: 'Google sign-in is not configured' })
+  }
+  if (!isHastonStoreContext(req)) {
+    return res.status(409).json({ message: 'Google sign-in is available only for the HASTON store' })
+  }
+
+  const nonce = crypto.randomBytes(32).toString('base64url')
+  nonceStore.issue(nonce)
+  res.cookie('google_login_nonce', nonce, googleNonceCookieOptions())
+  res.set('Cache-Control', 'no-store')
+  return res.status(200).json({ nonce })
+}
+
+export const googleLoginNonce = createGoogleLoginNonceHandler()
 
 export const registerUser = async (req, res, next) => {
   try {
@@ -113,7 +166,7 @@ export const registerUser = async (req, res, next) => {
   }
 }
 
-export const loginUser = async (req, res, next) => {
+export const createLoginUserHandler = ({ prismaClient = prisma } = {}) => async (req, res, next) => {
   try {
     const { email, password } = req.body || {}
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : ''
@@ -130,7 +183,7 @@ export const loginUser = async (req, res, next) => {
 
     let user
     try {
-      user = await prisma.user.findUnique({ where: { email: normalizedEmail } })
+      user = await prismaClient.user.findUnique({ where: { email: normalizedEmail } })
     } catch (dbErr) {
       res.status(500)
       throw new Error('Authentication failed')
@@ -191,6 +244,143 @@ export const loginUser = async (req, res, next) => {
       const statusCode = res.statusCode >= 400 ? res.statusCode : 500
       res.status(statusCode).json({ message })
     }
+  }
+}
+
+export const loginUser = createLoginUserHandler()
+
+const findGoogleIdentity = (prismaClient, providerSubject) => prismaClient.authIdentity.findUnique({
+  where: { provider_providerSubject: { provider: 'google', providerSubject } },
+  include: { user: true },
+})
+
+const isUsableGooglePayload = (payload, clientId, nonce) => {
+  if (!payload || typeof payload !== 'object') return false
+  if (payload.aud !== clientId) return false
+  if (!['accounts.google.com', 'https://accounts.google.com'].includes(payload.iss)) return false
+  if (typeof payload.exp !== 'number' || payload.exp <= Math.floor(Date.now() / 1000)) return false
+  if (typeof payload.sub !== 'string' || !payload.sub.trim()) return false
+  if (typeof payload.email !== 'string' || !payload.email.trim().includes('@')) return false
+  if (payload.email_verified !== true) return false
+  if (typeof payload.nonce !== 'string' || typeof nonce !== 'string') return false
+
+  const tokenNonce = Buffer.from(payload.nonce)
+  const cookieNonce = Buffer.from(nonce)
+  return tokenNonce.length === cookieNonce.length && crypto.timingSafeEqual(tokenNonce, cookieNonce)
+}
+
+const isCustomerInCurrentStore = (user, req) => Boolean(
+  user && user.isActive && user.role === 'CUSTOMER' && user.storeId === req.store.id,
+)
+
+const googleAccountConflict = (res) => res.status(409).json({
+  message: 'An account may already exist for this Google email. Sign in with the existing account before linking Google.',
+})
+
+const completeGoogleLogin = (user, res, nonce, nonceStore) => {
+  let token
+  try {
+    token = createToken(user)
+  } catch {
+    return res.status(500).json({ message: 'Google authentication failed' })
+  }
+  if (!nonceStore.consume(nonce)) {
+    clearGoogleNonceCookie(res)
+    return res.status(401).json({ message: 'Google authentication failed' })
+  }
+  clearGoogleNonceCookie(res)
+  setAuthCookie(res, token)
+  return res.status(200).json({ user: sanitizeUser(user), message: 'Login successful' })
+}
+
+export const createGoogleLoginHandler = ({ prismaClient = prisma, verifyCredential = verifyGoogleIdToken, nonceStore = googleNonceStore } = {}) => async (req, res) => {
+  const nonce = getRequestCookie(req, 'google_login_nonce')
+
+  if (!isHastonStoreContext(req)) {
+    return res.status(409).json({ message: 'Google sign-in is available only for the HASTON store' })
+  }
+
+  const clientId = process.env.GOOGLE_CLIENT_ID?.trim()
+  if (!clientId) {
+    return res.status(503).json({ message: 'Google sign-in is not configured' })
+  }
+
+  const credential = req.body?.credential
+  if (typeof credential !== 'string' || !credential || credential.length > 16384) {
+    return res.status(401).json({ message: 'Google authentication failed' })
+  }
+
+  let payload
+  try {
+    payload = await verifyCredential(credential, clientId)
+  } catch {
+    return res.status(401).json({ message: 'Google authentication failed' })
+  }
+
+  if (!isUsableGooglePayload(payload, clientId, nonce)) {
+    return res.status(401).json({ message: 'Google authentication failed' })
+  }
+  if (!nonceStore.has(nonce)) {
+    clearGoogleNonceCookie(res)
+    return res.status(401).json({ message: 'Google authentication failed' })
+  }
+
+  const providerSubject = payload.sub.trim()
+  const email = payload.email.trim().toLowerCase()
+
+  try {
+    const identity = await findGoogleIdentity(prismaClient, providerSubject)
+    if (identity) {
+      if (!isCustomerInCurrentStore(identity.user, req)) {
+        return res.status(401).json({ message: 'Google authentication failed' })
+      }
+      return completeGoogleLogin(identity.user, res, nonce, nonceStore)
+    }
+
+    const existingUser = await prismaClient.user.findUnique({ where: { email } })
+    if (existingUser) return googleAccountConflict(res)
+
+    const randomPassword = crypto.randomBytes(32).toString('base64url')
+    const hashedPassword = await bcrypt.hash(randomPassword, 10)
+    const userName = typeof payload.name === 'string' && payload.name.trim()
+      ? payload.name.trim()
+      : email.split('@')[0]
+
+    const user = await prismaClient.$transaction(async (transaction) => {
+      const createdUser = await transaction.user.create({
+        data: {
+          name: userName,
+          email,
+          password: hashedPassword,
+          role: 'CUSTOMER',
+          storeId: req.store.id,
+        },
+      })
+      await transaction.authIdentity.create({
+        data: { provider: 'google', providerSubject, userId: createdUser.id },
+      })
+      return createdUser
+    })
+
+    return completeGoogleLogin(user, res, nonce, nonceStore)
+  } catch (error) {
+    if (error?.code === 'P2002') {
+      try {
+        const racedIdentity = await findGoogleIdentity(prismaClient, providerSubject)
+        if (racedIdentity) {
+          if (!isCustomerInCurrentStore(racedIdentity.user, req)) {
+            return res.status(401).json({ message: 'Google authentication failed' })
+          }
+          return completeGoogleLogin(racedIdentity.user, res, nonce, nonceStore)
+        }
+
+        const racedEmail = await prismaClient.user.findUnique({ where: { email } })
+        if (racedEmail) return googleAccountConflict(res)
+      } catch {
+        return res.status(500).json({ message: 'Google authentication failed' })
+      }
+    }
+    return res.status(500).json({ message: 'Google authentication failed' })
   }
 }
 

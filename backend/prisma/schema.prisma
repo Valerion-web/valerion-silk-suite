@@ -59,8 +59,22 @@ model User {
   carts          Cart[]
   wishlists      Wishlist[]
   adminAssignments AdminAssignment[]
+  authIdentities AuthIdentity[]
 
   @@index([storeId])
+}
+
+model AuthIdentity {
+  id              Int      @id @default(autoincrement())
+  provider        String
+  providerSubject String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([provider, providerSubject])
+  @@unique([userId, provider])
 }
 
 model Address {
