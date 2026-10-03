@@ -15,6 +15,17 @@ const formatProduct = (product) => {
   const images = product.imagesList?.length
     ? product.imagesList.sort((a, b) => a.sortOrder - b.sortOrder).map((image) => image.url)
     : parseList(product.images)
+  const productVariants = product.variants || []
+  const activeVariants = productVariants.filter((variant) => variant.status === 'ACTIVE')
+  const variantSizes = [...new Map(activeVariants
+    .map((variant) => String(variant.size || '').trim())
+    .filter(Boolean)
+    .map((size) => [size.toLowerCase(), size])).values()]
+  const colorOptions = [...new Map(activeVariants
+    .map((variant) => ({ name: String(variant.color || '').trim(), code: variant.colorCode || null }))
+    .filter((option) => option.name)
+    .map((option) => [option.code ? option.code.toUpperCase() : option.name.toLowerCase(), option])).values()]
+  const hasActiveVariants = activeVariants.length > 0
 
   return {
     ...product,
@@ -24,13 +35,21 @@ const formatProduct = (product) => {
     hoverImage: product.hoverImage || images[1] || images[0] || null,
     tags: parseList(product.tags),
     keywords: parseList(product.keywords),
-    sizes: parseList(product.size),
-    colors: parseList(product.color),
+    sizes: hasActiveVariants ? variantSizes : parseList(product.size),
+    colors: hasActiveVariants ? colorOptions.map((option) => option.code || option.name) : parseList(product.color),
+    ...(hasActiveVariants ? { colorOptions } : {}),
     brand: product.brandRelation || (product.brand ? { name: product.brand, slug: null } : null),
     category: product.category || null,
-    variants: (product.variants || []).map((variant) => ({
-      ...variant,
+    variants: activeVariants.map((variant) => ({
+      id: variant.id,
+      sku: variant.sku,
+      size: variant.size,
+      color: variant.color,
+      colorCode: variant.colorCode,
       priceOverride: variant.priceOverride == null ? null : Number(variant.priceOverride),
+      quantityOnHand: Number(variant.quantityOnHand || 0),
+      reorderThreshold: Number(variant.reorderThreshold || 0),
+      status: variant.status,
     })),
   }
 }

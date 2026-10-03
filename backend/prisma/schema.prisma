@@ -204,6 +204,7 @@ model ProductVariant {
   sku              String         @unique
   size             String?
   color            String?
+  colorCode        String?
   priceOverride    Float?
   quantityOnHand   Int            @default(0)
   reorderThreshold Int            @default(5)

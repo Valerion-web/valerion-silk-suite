@@ -48,6 +48,144 @@ const serializeStringArray = (value) => {
   return ''
 }
 
+const adminProductInclude = {
+  category: true,
+  variants: {
+    where: { status: 'ACTIVE' },
+    orderBy: { id: 'asc' },
+    select: { id: true, sku: true, size: true, color: true, colorCode: true, quantityOnHand: true, priceOverride: true },
+  },
+}
+
+const formatAdminVariant = (variant) => ({
+  id: variant.id,
+  sku: variant.sku,
+  size: variant.size || '',
+  color: variant.color || '',
+  colorCode: variant.colorCode || '',
+  stock: Number(variant.quantityOnHand || 0),
+  quantityOnHand: Number(variant.quantityOnHand || 0),
+  price: variant.priceOverride == null ? '' : Number(variant.priceOverride),
+  priceOverride: variant.priceOverride == null ? null : Number(variant.priceOverride),
+})
+
+const badVariantRequest = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode })
+
+const normalizeSkuPart = (value, maxLength = 32) => String(value || '')
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toUpperCase()
+  .replace(/[^A-Z0-9]+/g, '-')
+  .replace(/^-|-$/g, '')
+  .slice(0, maxLength)
+
+const generateVariantSku = async (tx, productSku, variant) => {
+  const base = [
+    normalizeSkuPart(productSku, 48) || 'PRODUCT',
+    normalizeSkuPart(variant.color, 24) || 'NO-COLOR',
+    normalizeSkuPart(variant.size, 24) || 'NO-SIZE',
+  ].join('-')
+  let candidate = base
+  let suffix = 2
+  while (await tx.productVariant.findUnique({ where: { sku: candidate }, select: { id: true } })) {
+    candidate = `${base}-${suffix}`
+    suffix += 1
+  }
+  return candidate
+}
+
+const persistProductVariants = async (tx, productId, productSku, submittedVariants) => {
+  if (!Array.isArray(submittedVariants)) throw badVariantRequest('Variants must be an array')
+
+  const existingVariants = await tx.productVariant.findMany({ where: { productId } })
+  const existingById = new Map(existingVariants.map((variant) => [variant.id, variant]))
+  const submittedExistingIds = new Set()
+
+  for (const variant of submittedVariants) {
+    if (!variant || typeof variant !== 'object' || Array.isArray(variant)) {
+      throw badVariantRequest('Each variant must be an object')
+    }
+
+    const submittedId = Number(variant.id)
+    const existing = Number.isInteger(submittedId) && submittedId > 0 ? existingById.get(submittedId) : null
+    if (Number.isInteger(submittedId) && submittedId > 0 && !existing) {
+      throw badVariantRequest('Variant does not belong to this product')
+    }
+    if (existing && submittedExistingIds.has(existing.id)) {
+      throw badVariantRequest('A variant was submitted more than once')
+    }
+
+    const isBlankNewRow = !existing && ![
+      variant.sku,
+      variant.size,
+      variant.color,
+      variant.colorCode,
+      variant.stock,
+      variant.quantityOnHand,
+      variant.price,
+      variant.priceOverride,
+    ].some((value) => value !== undefined && value !== null && String(value).trim() !== '')
+    if (isBlankNewRow) continue
+
+    const optionalString = (field) => {
+      if (variant[field] === undefined) return existing?.[field] ?? null
+      const value = String(variant[field] ?? '').trim()
+      return value || null
+    }
+    const size = optionalString('size')
+    const color = optionalString('color')
+    const colorCode = optionalString('colorCode')
+    const isUnchangedLegacyColor = existing && existing.color && !existing.colorCode && color === existing.color && !colorCode
+    if (colorCode && !/^#[0-9a-f]{6}$/i.test(colorCode)) {
+      throw badVariantRequest('Color code must be a 6-digit hex value, such as #0A1931')
+    }
+    if ((color && !colorCode && !isUnchangedLegacyColor) || (!color && colorCode)) {
+      throw badVariantRequest('Each color must have both a display name and a color code')
+    }
+
+    const stockValue = variant.quantityOnHand ?? variant.stock
+    const quantityOnHand = stockValue === undefined
+      ? Number(existing?.quantityOnHand || 0)
+      : stockValue === '' || stockValue === null ? 0 : Number(stockValue)
+    if (!Number.isInteger(quantityOnHand) || quantityOnHand < 0) {
+      throw badVariantRequest('Variant stock must be a non-negative whole number')
+    }
+
+    const priceValue = variant.priceOverride !== undefined ? variant.priceOverride : variant.price
+    const priceOverride = priceValue === undefined
+      ? existing?.priceOverride ?? null
+      : priceValue === '' || priceValue === null ? null : Number(priceValue)
+    if (priceOverride !== null && (!Number.isFinite(priceOverride) || priceOverride < 0)) {
+      throw badVariantRequest('Variant price must be a non-negative number')
+    }
+
+    const suppliedSku = String(variant.sku ?? '').trim()
+    const sku = suppliedSku || existing?.sku || await generateVariantSku(tx, productSku, { color, size })
+    const conflictingSku = await tx.productVariant.findUnique({ where: { sku }, select: { id: true } })
+    if (conflictingSku && conflictingSku.id !== existing?.id) {
+      throw badVariantRequest('Variant SKU is already in use', 409)
+    }
+
+    const data = { sku, size, color, colorCode, quantityOnHand, priceOverride }
+    if (existing) {
+      submittedExistingIds.add(existing.id)
+      await tx.productVariant.update({ where: { id: existing.id }, data })
+    } else {
+      await tx.productVariant.create({ data: { ...data, productId, status: 'ACTIVE' } })
+    }
+  }
+
+  const omittedActiveIds = existingVariants
+    .filter((variant) => variant.status === 'ACTIVE' && !submittedExistingIds.has(variant.id))
+    .map((variant) => variant.id)
+  if (omittedActiveIds.length) {
+    await tx.productVariant.updateMany({
+      where: { productId, id: { in: omittedActiveIds }, status: 'ACTIVE' },
+      data: { status: 'ARCHIVED' },
+    })
+  }
+}
+
 const formatProduct = (product) => ({
   id: product.id,
   name: product.name,
@@ -76,6 +214,7 @@ const formatProduct = (product) => ({
   status: product.status || 'ACTIVE',
   category: product.category ? { id: product.category.id, name: product.category.name } : null,
   categoryId: product.categoryId ?? null,
+  ...(Array.isArray(product.variants) ? { variants: product.variants.map(formatAdminVariant) } : {}),
   createdAt: product.createdAt,
   updatedAt: product.updatedAt,
 })
@@ -194,7 +333,7 @@ export const getAdminProductById = async (req, res, next) => {
 
     const product = await prisma.product.findFirst({
       where: storeScope(req, { id: productId }),
-      include: { category: true },
+      include: adminProductInclude,
     })
 
     if (!product) {
@@ -237,6 +376,7 @@ export const createAdminProduct = async (req, res, next) => {
       size,
       color,
       material,
+      variants,
       metaTitle,
       metaDescription,
       keywords,
@@ -305,7 +445,11 @@ export const createAdminProduct = async (req, res, next) => {
       data.brandRelation = { connect: { id: parsedBrandId } }
     }
 
-    const createdProduct = await prisma.product.create({ data, include: { category: true } })
+    const createdProduct = await prisma.$transaction(async (tx) => {
+      const product = await tx.product.create({ data, include: { category: true } })
+      if (variants !== undefined) await persistProductVariants(tx, product.id, product.sku, variants)
+      return tx.product.findUnique({ where: { id: product.id }, include: adminProductInclude })
+    })
     res.status(201).json(formatProduct(createdProduct))
   } catch (error) {
     next(error)
@@ -343,6 +487,7 @@ export const updateAdminProduct = async (req, res, next) => {
       size,
       color,
       material,
+      variants,
       metaTitle,
       metaDescription,
       keywords,
@@ -422,10 +567,10 @@ export const updateAdminProduct = async (req, res, next) => {
       res.status(404)
       throw new Error('Product not found')
     }
-    const updatedProduct = await prisma.product.update({
-      where: { id: productId },
-      data,
-      include: { category: true },
+    const updatedProduct = await prisma.$transaction(async (tx) => {
+      const product = await tx.product.update({ where: { id: productId }, data })
+      if (variants !== undefined) await persistProductVariants(tx, productId, product.sku, variants)
+      return tx.product.findUnique({ where: { id: productId }, include: adminProductInclude })
     })
 
     res.json(formatProduct(updatedProduct))

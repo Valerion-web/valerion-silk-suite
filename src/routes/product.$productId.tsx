@@ -14,7 +14,8 @@ import {
   Scissors,
   Sparkles,
 } from "lucide-react";
-import { findProduct, products } from "@/lib/products";
+import { findProduct, products, type Product } from "@/lib/products";
+import { apiFetch } from "@/lib/api";
 import { getProductImage } from "@/lib/image-utils";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PageShell } from "@/components/site/PageShell";
@@ -35,9 +36,27 @@ interface ApiProduct {
   category?: { name: string } | string;
   colors?: string[];
   sizes?: string[];
+  colorOptions?: Array<{ name: string; code: string | null }>;
+  variants?: Array<{ id: number; sku?: string; size?: string | null; color?: string | null; colorCode?: string | null; material?: string | null; quantityOnHand?: number; priceOverride?: number | null; status?: string }>;
   fabric?: string;
   badge?: string;
 }
+
+type EffectiveProduct = {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  image: string;
+  altImage?: string;
+  colors: string[];
+  sizes: string[];
+  fabric?: string;
+  badge?: string;
+  description: string;
+};
+
+type SelectableColor = { name: string; code: string | null; value: string };
 
 
 
@@ -45,49 +64,69 @@ function ProductPage() {
   const { productId } = useParams();
   const product = findProduct(productId ?? "");
 
-  // Support fetching product from backend API when product isn't in the local static catalog
+  // Fetch backend options as well as the product fallback so stored variants can override local options.
   const [apiProduct, setApiProduct] = useState<ApiProduct | null>(null);
   const [loadingApi, setLoadingApi] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!product && productId) {
-      const fetchProduct = async () => {
-        setLoadingApi(true);
-        setApiError(null);
-        try {
-          const res = await fetch(`/api/products/${productId}`);
-          if (!res.ok) throw new Error(`Failed to fetch product ${res.status}`);
-          const data: ApiProduct = await res.json();
-          setApiProduct(data);
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          setApiError(message);
-        } finally {
-          setLoadingApi(false);
-        }
-      };
-      fetchProduct();
-    }
+    if (!productId) return;
+    const controller = new AbortController();
+    setApiProduct(null);
+    setLoadingApi(!product);
+    setApiError(null);
+
+    const fetchProduct = async () => {
+      try {
+        const endpoint = /^\d+$/.test(productId)
+          ? `/api/products/${productId}`
+          : `/api/products/slug/${encodeURIComponent(productId)}`;
+        const res = await apiFetch(endpoint, { signal: controller.signal });
+        if (!res.ok) throw new Error(`Failed to fetch product ${res.status}`);
+        const data: ApiProduct = await res.json();
+        setApiProduct(data);
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") return;
+        const message = err instanceof Error ? err.message : String(err);
+        setApiError(message);
+      } finally {
+        if (!controller.signal.aborted) setLoadingApi(false);
+      }
+    };
+    void fetchProduct();
+
+    return () => controller.abort();
   }, [product, productId]);
 
-  // Compose an effective product object that works for both local static products and API products
-  const effectiveProduct = product
-    ? product
+  const hasBackendVariantOptions = Array.isArray(apiProduct?.colorOptions);
+
+  // Keep local catalog content as fallback, but prefer backend variant options when present.
+  const effectiveProduct: EffectiveProduct | null = product
+    ? {
+        ...product,
+        colors: hasBackendVariantOptions ? apiProduct?.colors ?? [] : product.colors,
+        sizes: hasBackendVariantOptions ? apiProduct?.sizes ?? [] : product.sizes,
+      }
     : apiProduct
     ? {
         id: String(apiProduct.id),
         name: apiProduct.name,
-        category: apiProduct.category?.name ?? (typeof apiProduct.category === 'string' ? apiProduct.category : ''),
+        category: typeof apiProduct.category === 'string' ? apiProduct.category : apiProduct.category?.name ?? '',
         price: typeof apiProduct.price === 'string' ? Number(apiProduct.price) : apiProduct.price,
         image: getProductImage(apiProduct.images),
         altImage: apiProduct.images && apiProduct.images.length > 1 ? apiProduct.images[1] : undefined,
-        colors: apiProduct.colors ?? ["#000"],
+        colors: apiProduct.colors ?? [],
         sizes: apiProduct.sizes ?? [],
         fabric: apiProduct.fabric ?? '',
-        description: apiProduct.description ?? apiProduct.description ?? '',
+        description: apiProduct.description ?? '',
       }
     : null;
+
+  const colorOptions: SelectableColor[] = effectiveProduct
+    ? hasBackendVariantOptions
+      ? (apiProduct?.colorOptions || []).map((option) => ({ ...option, value: option.code || option.name }))
+      : effectiveProduct.colors.map((code) => ({ name: colorName(code), code, value: code }))
+    : [];
 
   // Initialize state variables (always called, never conditionally)
   const gallery = effectiveProduct ? [
@@ -101,14 +140,22 @@ function ProductPage() {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [size, setSize] = useState<string | null>(null);
   const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
-  const [color, setColor] = useState(effectiveProduct?.colors[0] ?? "#000");
+  const [color, setColor] = useState(effectiveProduct?.colors[0] ?? "");
   const [qty, setQty] = useState(1);
   const [zoomPos, setZoomPos] = useState<{ x: number; y: number } | null>(null);
   const imgRef = useRef<HTMLDivElement>(null);
+  const selectedColorOption = colorOptions.find((option) => option.value === color) ?? colorOptions[0];
 
-  const related = effectiveProduct ? products
-    .filter((p) => p.id !== effectiveProduct.id && p.category === effectiveProduct.category)
-    .concat(products.filter((p) => p.id !== effectiveProduct.id && p.category !== effectiveProduct.category))
+  useEffect(() => {
+    if (!hasBackendVariantOptions || !apiProduct) return;
+    const availableColors = (apiProduct.colorOptions || []).map((option) => option.code || option.name);
+    if (!availableColors.includes(color)) setColor(availableColors[0] || "");
+    if (size && !apiProduct.sizes?.includes(size)) setSize(null);
+  }, [apiProduct, color, hasBackendVariantOptions, size]);
+
+  const related: Product[] = effectiveProduct ? products
+    .filter((p: Product) => p.id !== effectiveProduct.id && p.category === effectiveProduct.category)
+    .concat(products.filter((p: Product) => p.id !== effectiveProduct.id && p.category !== effectiveProduct.category))
     .slice(0, 4) : [];
 
   const handlePrevImage = () => setActiveImg((current) => (current - 1 + gallery.length) % gallery.length);
@@ -313,24 +360,23 @@ function ProductPage() {
               <div className="flex items-center justify-between mb-4">
                 <p className="text-[11px] tracking-luxury uppercase">
                   Color —{" "}
-                  <span className="text-muted-foreground normal-case tracking-normal italic font-serif">
-                    {colorName(color)}
-                  </span>
+                  <span className="text-muted-foreground normal-case tracking-normal italic font-serif">{selectedColorOption?.name || ""}</span>
                 </p>
               </div>
               <div className="flex gap-3">
-                {effectiveProduct!.colors.map((c) => (
+                {colorOptions.map((option) => (
                   <motion.button
-                    key={c}
-                    onClick={() => setColor(c)}
+                    key={`${option.name}-${option.code || "no-code"}`}
+                    onClick={() => setColor(option.value)}
                     whileTap={{ scale: 0.92 }}
                     className={`relative h-11 w-11 rounded-full border-2 transition-all duration-300 ${
-                      color === c
+                      selectedColorOption?.value === option.value
                         ? "border-gold ring-2 ring-gold/30 ring-offset-2 ring-offset-background"
                         : "border-border hover:border-foreground"
                     }`}
-                    style={{ backgroundColor: c }}
-                    aria-label={colorName(c)}
+                    style={option.code ? { backgroundColor: option.code } : undefined}
+                    aria-label={option.name}
+                    title={option.name}
                   />
                 ))}
               </div>
@@ -348,7 +394,7 @@ function ProductPage() {
                 </button>
               </div>
               <div className="flex flex-wrap gap-2">
-                {effectiveProduct!.sizes.map((s) => (
+                {effectiveProduct!.sizes.map((s: string) => (
                   <motion.button
                     key={s}
                     onClick={() => setSize(s)}
@@ -372,7 +418,7 @@ function ProductPage() {
 
             {/* CTA */}
             {effectiveProduct && (
-              <ProductCTA product={effectiveProduct as NonNullable<ReturnType<typeof findProduct>>} size={size} color={color} qty={qty} setQty={setQty} />
+              <ProductCTA product={effectiveProduct as NonNullable<ReturnType<typeof findProduct>>} size={size} color={hasBackendVariantOptions ? selectedColorOption?.name || "" : color} qty={qty} setQty={setQty} />
             )}
 
             {/* Scarcity */}
@@ -475,7 +521,7 @@ function ProductPage() {
               </Link>
             </div>
             <div className="grid gap-x-6 gap-y-12 sm:grid-cols-2 lg:grid-cols-4">
-              {related.map((p, i) => (
+              {related.map((p: Product, i: number) => (
                 <ProductCard key={p.id} product={p} index={i} />
               ))}
             </div>
