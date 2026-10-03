@@ -1980,6 +1980,8 @@ function LuxuryTopSellingProducts({ products }: { products: Array<{ id: number; 
 }
 
 function RecentProducts({ products }: { products: ProductRecord[] }) {
+  const navigate = useNavigate();
+
   return (
     <div className="rounded-[24px] border border-[#E5E7EB] bg-[#FFFFFF] p-4 shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
       <div className="mb-3">
@@ -2004,6 +2006,10 @@ function RecentProducts({ products }: { products: ProductRecord[] }) {
               </div>
               <div className="flex items-center gap-2 text-right">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#6B7280]">{formatDateLabel(product.updatedAt)}</span>
+                <button type="button" title="Edit product" aria-label={`Edit ${product.name || "product"}`} onClick={() => navigate(`/admin/products/${product.id}/edit`)} className="inline-flex h-8 items-center gap-1.5 rounded-full border border-[#E5E7EB] bg-white px-2.5 text-xs font-semibold text-[#111827] transition duration-200 hover:border-[#D4AF37] hover:bg-[#FFF8E8]">
+                  <Edit className="h-3.5 w-3.5" />
+                  Edit
+                </button>
                 <div className="flex h-8 w-8 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#0F172A] transition duration-200 group-hover:border-[#D4AF37] group-hover:bg-[#FFF8E8]">
                   <ArrowUpRight className="h-4 w-4" />
                 </div>
