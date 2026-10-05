@@ -99,6 +99,9 @@ model Category {
   name        String    @unique
   slug        String    @unique
   description String?
+  parentId    Int?
+  parent      Category? @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children    Category[] @relation("CategoryHierarchy")
   products    Product[]
   store       Store     @relation(fields: [storeId], references: [id])
   storeId     Int
@@ -107,6 +110,7 @@ model Category {
 
   @@index([storeId])
   @@index([storeId, slug])
+  @@index([storeId, parentId])
 }
 
 model Brand {
@@ -204,6 +208,7 @@ model ProductVariant {
   sku              String         @unique
   size             String?
   color            String?
+  colorCode        String?
   priceOverride    Float?
   quantityOnHand   Int            @default(0)
   reorderThreshold Int            @default(5)
@@ -251,6 +256,7 @@ model Order {
   currency        String               @default("INR")
   shippingAddress String?
   billingAddress  String?
+  checkoutSnapshot Json?
   idempotencyKey   String?
   requestFingerprint String?
   requestContextFingerprint String?

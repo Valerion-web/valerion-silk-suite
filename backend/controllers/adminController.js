@@ -84,6 +84,144 @@ const serializeStringArray = (value) => {
   return ''
 }
 
+const adminProductInclude = {
+  category: true,
+  variants: {
+    where: { status: 'ACTIVE' },
+    orderBy: { id: 'asc' },
+    select: { id: true, sku: true, size: true, color: true, colorCode: true, quantityOnHand: true, priceOverride: true },
+  },
+}
+
+const formatAdminVariant = (variant) => ({
+  id: variant.id,
+  sku: variant.sku,
+  size: variant.size || '',
+  color: variant.color || '',
+  colorCode: variant.colorCode || '',
+  stock: Number(variant.quantityOnHand || 0),
+  quantityOnHand: Number(variant.quantityOnHand || 0),
+  price: variant.priceOverride == null ? '' : Number(variant.priceOverride),
+  priceOverride: variant.priceOverride == null ? null : Number(variant.priceOverride),
+})
+
+const badVariantRequest = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode })
+
+const normalizeSkuPart = (value, maxLength = 32) => String(value || '')
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toUpperCase()
+  .replace(/[^A-Z0-9]+/g, '-')
+  .replace(/^-|-$/g, '')
+  .slice(0, maxLength)
+
+const generateVariantSku = async (tx, productSku, variant) => {
+  const base = [
+    normalizeSkuPart(productSku, 48) || 'PRODUCT',
+    normalizeSkuPart(variant.color, 24) || 'NO-COLOR',
+    normalizeSkuPart(variant.size, 24) || 'NO-SIZE',
+  ].join('-')
+  let candidate = base
+  let suffix = 2
+  while (await tx.productVariant.findUnique({ where: { sku: candidate }, select: { id: true } })) {
+    candidate = `${base}-${suffix}`
+    suffix += 1
+  }
+  return candidate
+}
+
+const persistProductVariants = async (tx, productId, productSku, submittedVariants) => {
+  if (!Array.isArray(submittedVariants)) throw badVariantRequest('Variants must be an array')
+
+  const existingVariants = await tx.productVariant.findMany({ where: { productId } })
+  const existingById = new Map(existingVariants.map((variant) => [variant.id, variant]))
+  const submittedExistingIds = new Set()
+
+  for (const variant of submittedVariants) {
+    if (!variant || typeof variant !== 'object' || Array.isArray(variant)) {
+      throw badVariantRequest('Each variant must be an object')
+    }
+
+    const submittedId = Number(variant.id)
+    const existing = Number.isInteger(submittedId) && submittedId > 0 ? existingById.get(submittedId) : null
+    if (Number.isInteger(submittedId) && submittedId > 0 && !existing) {
+      throw badVariantRequest('Variant does not belong to this product')
+    }
+    if (existing && submittedExistingIds.has(existing.id)) {
+      throw badVariantRequest('A variant was submitted more than once')
+    }
+
+    const isBlankNewRow = !existing && ![
+      variant.sku,
+      variant.size,
+      variant.color,
+      variant.colorCode,
+      variant.stock,
+      variant.quantityOnHand,
+      variant.price,
+      variant.priceOverride,
+    ].some((value) => value !== undefined && value !== null && String(value).trim() !== '')
+    if (isBlankNewRow) continue
+
+    const optionalString = (field) => {
+      if (variant[field] === undefined) return existing?.[field] ?? null
+      const value = String(variant[field] ?? '').trim()
+      return value || null
+    }
+    const size = optionalString('size')
+    const color = optionalString('color')
+    const colorCode = optionalString('colorCode')
+    const isUnchangedLegacyColor = existing && existing.color && !existing.colorCode && color === existing.color && !colorCode
+    if (colorCode && !/^#[0-9a-f]{6}$/i.test(colorCode)) {
+      throw badVariantRequest('Color code must be a 6-digit hex value, such as #0A1931')
+    }
+    if ((color && !colorCode && !isUnchangedLegacyColor) || (!color && colorCode)) {
+      throw badVariantRequest('Each color must have both a display name and a color code')
+    }
+
+    const stockValue = variant.quantityOnHand ?? variant.stock
+    const quantityOnHand = stockValue === undefined
+      ? Number(existing?.quantityOnHand || 0)
+      : stockValue === '' || stockValue === null ? 0 : Number(stockValue)
+    if (!Number.isInteger(quantityOnHand) || quantityOnHand < 0) {
+      throw badVariantRequest('Variant stock must be a non-negative whole number')
+    }
+
+    const priceValue = variant.priceOverride !== undefined ? variant.priceOverride : variant.price
+    const priceOverride = priceValue === undefined
+      ? existing?.priceOverride ?? null
+      : priceValue === '' || priceValue === null ? null : Number(priceValue)
+    if (priceOverride !== null && (!Number.isFinite(priceOverride) || priceOverride < 0)) {
+      throw badVariantRequest('Variant price must be a non-negative number')
+    }
+
+    const suppliedSku = String(variant.sku ?? '').trim()
+    const sku = suppliedSku || existing?.sku || await generateVariantSku(tx, productSku, { color, size })
+    const conflictingSku = await tx.productVariant.findUnique({ where: { sku }, select: { id: true } })
+    if (conflictingSku && conflictingSku.id !== existing?.id) {
+      throw badVariantRequest('Variant SKU is already in use', 409)
+    }
+
+    const data = { sku, size, color, colorCode, quantityOnHand, priceOverride }
+    if (existing) {
+      submittedExistingIds.add(existing.id)
+      await tx.productVariant.update({ where: { id: existing.id }, data })
+    } else {
+      await tx.productVariant.create({ data: { ...data, productId, status: 'ACTIVE' } })
+    }
+  }
+
+  const omittedActiveIds = existingVariants
+    .filter((variant) => variant.status === 'ACTIVE' && !submittedExistingIds.has(variant.id))
+    .map((variant) => variant.id)
+  if (omittedActiveIds.length) {
+    await tx.productVariant.updateMany({
+      where: { productId, id: { in: omittedActiveIds }, status: 'ACTIVE' },
+      data: { status: 'ARCHIVED' },
+    })
+  }
+}
+
 const formatProduct = (product) => ({
   id: product.id,
   name: product.name,
@@ -112,6 +250,7 @@ const formatProduct = (product) => ({
   status: product.status || 'ACTIVE',
   category: product.category ? { id: product.category.id, name: product.category.name } : null,
   categoryId: product.categoryId ?? null,
+  ...(Array.isArray(product.variants) ? { variants: product.variants.map(formatAdminVariant) } : {}),
   createdAt: product.createdAt,
   updatedAt: product.updatedAt,
 })
@@ -230,7 +369,7 @@ export const getAdminProductById = async (req, res, next) => {
 
     const product = await prisma.product.findFirst({
       where: storeScope(req, { id: productId }),
-      include: { category: true },
+      include: adminProductInclude,
     })
 
     if (!product) {
@@ -273,6 +412,7 @@ export const createAdminProduct = async (req, res, next) => {
       size,
       color,
       material,
+      variants,
       metaTitle,
       metaDescription,
       keywords,
@@ -341,7 +481,11 @@ export const createAdminProduct = async (req, res, next) => {
       data.brandId = parsedBrandId
     }
 
-    const createdProduct = await prisma.product.create({ data, include: { category: true } })
+    const createdProduct = await prisma.$transaction(async (tx) => {
+      const product = await tx.product.create({ data, include: { category: true } })
+      if (variants !== undefined) await persistProductVariants(tx, product.id, product.sku, variants)
+      return tx.product.findUnique({ where: { id: product.id }, include: adminProductInclude })
+    })
     res.status(201).json(formatProduct(createdProduct))
   } catch (error) {
     next(error)
@@ -379,6 +523,7 @@ export const updateAdminProduct = async (req, res, next) => {
       size,
       color,
       material,
+      variants,
       metaTitle,
       metaDescription,
       keywords,
@@ -458,10 +603,10 @@ export const updateAdminProduct = async (req, res, next) => {
       res.status(404)
       throw new Error('Product not found')
     }
-    const updatedProduct = await prisma.product.update({
-      where: { id: productId },
-      data,
-      include: { category: true },
+    const updatedProduct = await prisma.$transaction(async (tx) => {
+      const product = await tx.product.update({ where: { id: productId }, data })
+      if (variants !== undefined) await persistProductVariants(tx, productId, product.sku, variants)
+      return tx.product.findUnique({ where: { id: productId }, include: adminProductInclude })
     })
 
     res.json(formatProduct(updatedProduct))
@@ -588,20 +733,67 @@ export const deleteAdminOrder = async (req, res, next) => {
   }
 }
 
+const categoryParentSelect = { id: true, name: true, slug: true }
+
+const formatAdminCategory = (category, productCount = 0) => ({
+  id: category.id,
+  name: category.name,
+  slug: category.slug,
+  description: category.description,
+  parentId: category.parentId ?? null,
+  parent: category.parent ? {
+    id: category.parent.id,
+    name: category.parent.name,
+    slug: category.parent.slug,
+  } : null,
+  productCount,
+})
+
+const validateCategoryParent = async (req, requestedParentId, categoryId = null) => {
+  if (requestedParentId === undefined || requestedParentId === null || requestedParentId === '') {
+    return { parentId: null }
+  }
+
+  const parentId = Number(requestedParentId)
+  if (!Number.isInteger(parentId) || parentId < 1) {
+    return { error: 'Parent category ID must be a positive integer', statusCode: 400 }
+  }
+  if (categoryId !== null && parentId === categoryId) {
+    return { error: 'A category cannot be its own parent', statusCode: 400 }
+  }
+
+  const parent = await prisma.category.findFirst({ where: storeScope(req, { id: parentId }) })
+  if (!parent) {
+    return { error: 'Parent category not found in the selected store', statusCode: 400 }
+  }
+  if (parent.parentId !== null) {
+    return { error: 'Parent category must be a root category', statusCode: 400 }
+  }
+
+  if (categoryId !== null) {
+    const existingChild = await prisma.category.findFirst({
+      where: storeScope(req, { parentId: categoryId }),
+      select: { id: true },
+    })
+    if (existingChild) {
+      return { error: 'A category with subcategories cannot become a subcategory', statusCode: 409 }
+    }
+  }
+
+  return { parentId }
+}
+
 export const getAdminCategories = async (req, res, next) => {
   try {
     const categories = await prisma.category.findMany({
       where: storeScope(req),
-      include: { _count: { select: { products: true } } },
+      include: {
+        _count: { select: { products: true } },
+        parent: { select: categoryParentSelect },
+      },
       orderBy: { createdAt: 'desc' },
     })
-    res.json(categories.map((category) => ({
-      id: category.id,
-      name: category.name,
-      slug: category.slug,
-      description: category.description,
-      productCount: category._count.products,
-    })))
+    res.json(categories.map((category) => formatAdminCategory(category, category._count.products)))
   } catch (error) {
     next(error)
   }
@@ -609,14 +801,21 @@ export const getAdminCategories = async (req, res, next) => {
 
 export const createAdminCategory = async (req, res, next) => {
   try {
-    const { name, description } = req.body || {}
+    const { name, description, parentId } = req.body || {}
     if (!name) {
       res.status(400)
       throw new Error('Category name is required')
     }
+    const parentValidation = await validateCategoryParent(req, parentId)
+    if (parentValidation.error) {
+      return res.status(parentValidation.statusCode).json({ message: parentValidation.error })
+    }
     const slug = `${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`
-    const category = await prisma.category.create({ data: { name, slug, description, storeId: req.store.id } })
-    res.status(201).json({ id: category.id, name: category.name, slug: category.slug, description: category.description, productCount: 0 })
+    const category = await prisma.category.create({
+      data: { name, slug, description, parentId: parentValidation.parentId, storeId: req.store.id },
+      include: { parent: { select: categoryParentSelect } },
+    })
+    res.status(201).json(formatAdminCategory(category))
   } catch (error) {
     next(error)
   }
@@ -625,7 +824,7 @@ export const createAdminCategory = async (req, res, next) => {
 export const updateAdminCategory = async (req, res, next) => {
   try {
     const categoryId = Number(req.params.id)
-    const { name, description } = req.body || {}
+    const { name, description, parentId } = req.body || {}
     if (Number.isNaN(categoryId)) {
       res.status(400)
       throw new Error('Invalid category ID')
@@ -635,11 +834,23 @@ export const updateAdminCategory = async (req, res, next) => {
       res.status(404)
       throw new Error('Category not found')
     }
+    const data = {
+      ...(name !== undefined ? { name } : {}),
+      ...(description !== undefined ? { description } : {}),
+    }
+    if (parentId !== undefined) {
+      const parentValidation = await validateCategoryParent(req, parentId, existing.id)
+      if (parentValidation.error) {
+        return res.status(parentValidation.statusCode).json({ message: parentValidation.error })
+      }
+      data.parentId = parentValidation.parentId
+    }
     const category = await prisma.category.update({
       where: { id: existing.id },
-      data: { ...(name !== undefined ? { name } : {}), ...(description !== undefined ? { description } : {}) },
+      data,
+      include: { parent: { select: categoryParentSelect } },
     })
-    res.json({ id: category.id, name: category.name, slug: category.slug, description: category.description, productCount: 0 })
+    res.json(formatAdminCategory(category))
   } catch (error) {
     next(error)
   }
@@ -656,6 +867,13 @@ export const deleteAdminCategory = async (req, res, next) => {
     if (!category) {
       res.status(404)
       throw new Error('Category not found')
+    }
+    const child = await prisma.category.findFirst({
+      where: storeScope(req, { parentId: category.id }),
+      select: { id: true },
+    })
+    if (child) {
+      return res.status(409).json({ message: 'Cannot delete a category that has subcategories' })
     }
     await prisma.category.delete({ where: { id: category.id } })
     res.json({ message: 'Category deleted successfully' })
