@@ -111,7 +111,8 @@ type CategoryRecord = {
   slug?: string;
   description?: string;
   productCount?: number;
-  parentCategory?: string;
+  parentId?: number | null;
+  parent?: { id: number; name: string; slug?: string } | null;
   color?: string;
   status?: "ACTIVE" | "DRAFT" | "ARCHIVED" | string;
   visibility?: "PUBLIC" | "HIDDEN" | string;
@@ -1853,7 +1854,7 @@ function CategoriesPage() {
     name: "",
     slug: "",
     description: "",
-    parentCategory: "",
+    parentId: "" as number | "",
     color: "#D4AF37",
     status: "ACTIVE",
     visibility: "PUBLIC",
@@ -1871,7 +1872,7 @@ function CategoriesPage() {
       name: "",
       slug: "",
       description: "",
-      parentCategory: "",
+      parentId: "" as number | "",
       color: "#D4AF37",
       status: "ACTIVE",
       visibility: "PUBLIC",
@@ -1899,31 +1900,28 @@ function CategoriesPage() {
         setLoading(true);
         const data = await fetchAdmin("/categories");
         const rawItems = Array.isArray(data) ? data : Array.isArray((data as { categories?: CategoryRecord[] }).categories) ? (data as { categories?: CategoryRecord[] }).categories! : [];
-        const mapped = rawItems.length
-          ? rawItems.map((item, index) => ({
-              id: item.id ?? index + 1,
+        const mapped = rawItems
+          .filter((item) => Number.isInteger(Number(item?.id)))
+          .map((item, index) => ({
+              id: Number(item.id),
               name: item.name || `Collection ${index + 1}`,
               slug: item.slug || slugify(item.name || `collection-${index + 1}`),
               description: item.description || "Curated for the House of Valerion experience.",
               productCount: item.productCount ?? (index + 1) * 6,
+              parentId: item.parentId ?? null,
+              parent: item.parent || null,
               revenueShare: item.revenueShare ?? Math.max(8, 34 - index),
               status: item.status || "ACTIVE",
               visibility: item.visibility || "PUBLIC",
               featured: item.featured ?? index === 0,
               color: item.color || ["#D4AF37", "#0A1931", "#1E3A8A", "#7C3AED"][index % 4],
-              parentCategory: item.parentCategory || "",
               sortOrder: item.sortOrder ?? index + 1,
               createdAt: item.createdAt || new Date(Date.now() - index * 86400000).toISOString(),
               updatedAt: item.updatedAt || new Date().toISOString(),
               seoTitle: item.seoTitle || `${item.name || `Collection ${index + 1}`} — House of Valerion`,
               seoDescription: item.seoDescription || item.description || "Luxury fashion category crafted for premium discovery.",
               keywords: item.keywords || ["luxury", "fashion"],
-            }))
-          : [
-              { id: 1, name: "Signature Tailoring", slug: "signature-tailoring", description: "Precision-fitted silhouettes and wardrobe essentials.", productCount: 42, revenueShare: 29, status: "ACTIVE", visibility: "PUBLIC", featured: true, color: "#D4AF37", parentCategory: "", sortOrder: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), seoTitle: "Signature Tailoring", seoDescription: "Luxury tailoring crafted for exceptional wardrobes.", keywords: ["tailoring", "luxury"] },
-              { id: 2, name: "Evening Edit", slug: "evening-edit", description: "Statement pieces for gala evenings and formal moments.", productCount: 28, revenueShare: 21, status: "ACTIVE", visibility: "PUBLIC", featured: true, color: "#0A1931", parentCategory: "", sortOrder: 2, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), seoTitle: "Evening Edit", seoDescription: "Evening edits exploring formal luxury fashion.", keywords: ["evening", "formal"] },
-              { id: 3, name: "Crafted Accessories", slug: "crafted-accessories", description: "Refined accessories to complete every look.", productCount: 18, revenueShare: 15, status: "DRAFT", visibility: "HIDDEN", featured: false, color: "#1E3A8A", parentCategory: "", sortOrder: 3, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), seoTitle: "Crafted Accessories", seoDescription: "Luxury accessories for a complete, elevated wardrobe.", keywords: ["accessories", "luxury"] },
-            ];
+            }));
         setCategories(mapped);
         setActivity([
           { id: 1, title: "Catalogue synced", detail: `${mapped.length} categories ready for review.`, time: "Just now" },
@@ -1942,7 +1940,8 @@ function CategoriesPage() {
     const normalized = search.trim().toLowerCase();
     return [...categories]
       .filter((category) => {
-        const matchesSearch = !normalized || [category.name, category.description, category.slug, category.parentCategory].some((value) => (value || "").toLowerCase().includes(normalized));
+        const parentName = category.parent?.name || categories.find((item) => item.id === category.parentId)?.name;
+        const matchesSearch = !normalized || [category.name, category.description, category.slug, parentName].some((value) => (value || "").toLowerCase().includes(normalized));
         const matchesStatus = statusFilter === "all" || category.status?.toUpperCase() === statusFilter.toUpperCase();
         const matchesVisibility = visibilityFilter === "all" || category.visibility?.toUpperCase() === visibilityFilter.toUpperCase();
         const matchesProductCount = productFilter === "all" || (productFilter === "high" && (category.productCount ?? 0) >= 24) || (productFilter === "low" && (category.productCount ?? 0) < 24);
@@ -1960,7 +1959,20 @@ function CategoriesPage() {
             return (new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime());
         }
       });
+    const roots = filtered.filter((category) => category.parentId == null);
+    const children = filtered.filter((category) => category.parentId != null);
+    const ordered: CategoryRecord[] = [];
+    for (const root of roots) {
+      ordered.push(root, ...children.filter((child) => child.parentId === root.id));
+    }
+    const includedIds = new Set(ordered.map((category) => category.id));
+    return [...ordered, ...children.filter((category) => !includedIds.has(category.id))];
   }, [categories, search, sortBy, statusFilter, visibilityFilter, productFilter]);
+
+  const rootCategories = categories.filter((category) => category.parentId == null);
+  const selectedCategoryHasChildren = selectedCategory
+    ? categories.some((category) => category.parentId === selectedCategory.id)
+    : false;
 
   const totalProducts = categories.reduce((sum, category) => sum + (category.productCount ?? 0), 0);
   const activeCategories = categories.filter((category) => category.status?.toUpperCase() !== "ARCHIVED").length;
@@ -2010,7 +2022,7 @@ function CategoriesPage() {
       name: category.name || "",
       slug: category.slug || slugify(category.name || ""),
       description: category.description || "",
-      parentCategory: category.parentCategory || "",
+      parentId: category.parentId ?? "",
       color: category.color || "#D4AF37",
       status: category.status || "ACTIVE",
       visibility: category.visibility || "PUBLIC",
@@ -2044,12 +2056,11 @@ function CategoriesPage() {
       return;
     }
 
-    const payload: CategoryRecord = {
-      id: selectedCategory?.id ?? Date.now(),
+    const payload = {
       name: draft.name.trim(),
       slug: nextSlug,
       description: draft.description.trim(),
-      parentCategory: draft.parentCategory.trim(),
+      parentId: draft.parentId === "" ? null : Number(draft.parentId),
       color: draft.color,
       status: draft.status as CategoryRecord["status"],
       visibility: draft.visibility as CategoryRecord["visibility"],
@@ -2067,13 +2078,29 @@ function CategoriesPage() {
     setSaving(true);
     try {
       if (mode === "edit" && selectedCategory) {
-        await fetchAdmin(`/categories/${selectedCategory.id}`, { method: "PUT", body: JSON.stringify(payload) }).catch(() => payload);
-        setCategories((current) => current.map((item) => (item.id === selectedCategory.id ? payload : item)));
+        const response = await fetchAdmin(`/categories/${selectedCategory.id}`, { method: "PUT", body: JSON.stringify(payload) });
+        if (Number(response?.id) !== selectedCategory.id) throw new Error("Category update did not return the saved category.");
+        const updatedCategory: CategoryRecord = {
+          ...selectedCategory,
+          ...payload,
+          ...response,
+          id: selectedCategory.id,
+          parentId: response.parentId ?? payload.parentId,
+        };
+        setCategories((current) => current.map((item) => (item.id === selectedCategory.id ? updatedCategory : item)));
         setActivity((current) => [{ id: Date.now(), title: "Category updated", detail: `${payload.name} refreshed in the catalog.`, time: "Just now" }, ...current].slice(0, 4));
         toast.success("Category updated", { className: "luxury-toast" });
       } else {
-        await fetchAdmin("/categories", { method: "POST", body: JSON.stringify(payload) }).catch(() => payload);
-        setCategories((current) => [payload, ...current]);
+        const response = await fetchAdmin("/categories", { method: "POST", body: JSON.stringify(payload) });
+        const createdId = Number(response?.id);
+        if (!Number.isInteger(createdId) || createdId < 1) throw new Error("Category creation did not return a valid category ID.");
+        const createdCategory: CategoryRecord = {
+          ...payload,
+          ...response,
+          id: createdId,
+          parentId: response.parentId ?? payload.parentId,
+        };
+        setCategories((current) => [createdCategory, ...current]);
         setActivity((current) => [{ id: Date.now(), title: "Category created", detail: `${payload.name} is now available.`, time: "Just now" }, ...current].slice(0, 4));
         toast.success("Category created", { className: "luxury-toast" });
       }
@@ -2089,7 +2116,7 @@ function CategoriesPage() {
     const target = categories.find((category) => category.id === categoryId);
     if (!target) return;
     try {
-      await fetchAdmin(`/categories/${categoryId}`, { method: "DELETE" }).catch(() => undefined);
+      await fetchAdmin(`/categories/${categoryId}`, { method: "DELETE" });
       setCategories((current) => current.filter((category) => category.id !== categoryId));
       setActivity((current) => [{ id: Date.now(), title: "Category archived", detail: `${target.name} removed from the active view.`, time: "Just now" }, ...current].slice(0, 4));
       toast.success("Category deleted", { className: "luxury-toast" });
@@ -2383,13 +2410,14 @@ function CategoriesPage() {
                   {filteredCategories.map((category) => (
                     <tr key={category.id} className="border-t border-[#E5E7EB] bg-white transition hover:bg-[#FFF8E8]">
                       <td className="px-4 py-4">
-                        <div className="flex items-center gap-3">
+                        <div className={`flex items-center gap-3 ${category.parentId != null ? "ml-5 border-l-2 border-[#D4AF37] pl-3" : ""}`}>
                           <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[#E5E7EB] text-sm font-semibold text-[#041E42]" style={{ backgroundColor: `${category.color || "#D4AF37"}16` }}>
                             {category.name?.charAt(0).toUpperCase() || "C"}
                           </div>
                           <div className="min-w-0">
                             <p className="truncate font-semibold text-[#041E42]">{category.name}</p>
                             <p className="mt-1 truncate text-xs text-[#64748B]">{category.slug}</p>
+                            {category.parentId != null ? <p className="mt-1 truncate text-[11px] text-[#64748B]">Subcategory of {category.parent?.name || categories.find((item) => item.id === category.parentId)?.name || "Parent category"}</p> : null}
                           </div>
                         </div>
                       </td>
@@ -2500,7 +2528,13 @@ function CategoriesPage() {
                       </label>
                       <label className="text-sm text-[#64748B]">
                         <span className="mb-2 block font-semibold text-[#041E42]">Parent category</span>
-                        <input value={draft.parentCategory} onChange={(event) => setDraft((current) => ({ ...current, parentCategory: event.target.value }))} className="w-full rounded-[18px] border border-[#E5E7EB] bg-white px-3 py-3 outline-none transition focus:border-[#D4AF37]" />
+                        <select value={draft.parentId} onChange={(event) => setDraft((current) => ({ ...current, parentId: event.target.value ? Number(event.target.value) : "" }))} className="w-full rounded-[18px] border border-[#E5E7EB] bg-white px-3 py-3 outline-none transition focus:border-[#D4AF37]">
+                          <option value="">None / Root category</option>
+                          {rootCategories.filter((category) => category.id !== selectedCategory?.id).map((category) => (
+                            <option key={category.id} value={category.id} disabled={selectedCategoryHasChildren}>{category.name}</option>
+                          ))}
+                        </select>
+                        {selectedCategoryHasChildren ? <p className="mt-2 text-xs text-[#64748B]">A category with subcategories must remain a root category.</p> : null}
                       </label>
                       <label className="text-sm text-[#64748B]">
                         <span className="mb-2 block font-semibold text-[#041E42]">Sort order</span>

@@ -697,20 +697,67 @@ export const deleteAdminOrder = async (req, res, next) => {
   }
 }
 
+const categoryParentSelect = { id: true, name: true, slug: true }
+
+const formatAdminCategory = (category, productCount = 0) => ({
+  id: category.id,
+  name: category.name,
+  slug: category.slug,
+  description: category.description,
+  parentId: category.parentId ?? null,
+  parent: category.parent ? {
+    id: category.parent.id,
+    name: category.parent.name,
+    slug: category.parent.slug,
+  } : null,
+  productCount,
+})
+
+const validateCategoryParent = async (req, requestedParentId, categoryId = null) => {
+  if (requestedParentId === undefined || requestedParentId === null || requestedParentId === '') {
+    return { parentId: null }
+  }
+
+  const parentId = Number(requestedParentId)
+  if (!Number.isInteger(parentId) || parentId < 1) {
+    return { error: 'Parent category ID must be a positive integer', statusCode: 400 }
+  }
+  if (categoryId !== null && parentId === categoryId) {
+    return { error: 'A category cannot be its own parent', statusCode: 400 }
+  }
+
+  const parent = await prisma.category.findFirst({ where: storeScope(req, { id: parentId }) })
+  if (!parent) {
+    return { error: 'Parent category not found in the selected store', statusCode: 400 }
+  }
+  if (parent.parentId !== null) {
+    return { error: 'Parent category must be a root category', statusCode: 400 }
+  }
+
+  if (categoryId !== null) {
+    const existingChild = await prisma.category.findFirst({
+      where: storeScope(req, { parentId: categoryId }),
+      select: { id: true },
+    })
+    if (existingChild) {
+      return { error: 'A category with subcategories cannot become a subcategory', statusCode: 409 }
+    }
+  }
+
+  return { parentId }
+}
+
 export const getAdminCategories = async (req, res, next) => {
   try {
     const categories = await prisma.category.findMany({
       where: storeScope(req),
-      include: { _count: { select: { products: true } } },
+      include: {
+        _count: { select: { products: true } },
+        parent: { select: categoryParentSelect },
+      },
       orderBy: { createdAt: 'desc' },
     })
-    res.json(categories.map((category) => ({
-      id: category.id,
-      name: category.name,
-      slug: category.slug,
-      description: category.description,
-      productCount: category._count.products,
-    })))
+    res.json(categories.map((category) => formatAdminCategory(category, category._count.products)))
   } catch (error) {
     next(error)
   }
@@ -718,14 +765,21 @@ export const getAdminCategories = async (req, res, next) => {
 
 export const createAdminCategory = async (req, res, next) => {
   try {
-    const { name, description } = req.body || {}
+    const { name, description, parentId } = req.body || {}
     if (!name) {
       res.status(400)
       throw new Error('Category name is required')
     }
+    const parentValidation = await validateCategoryParent(req, parentId)
+    if (parentValidation.error) {
+      return res.status(parentValidation.statusCode).json({ message: parentValidation.error })
+    }
     const slug = `${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`
-    const category = await prisma.category.create({ data: { name, slug, description, storeId: req.store.id } })
-    res.status(201).json({ id: category.id, name: category.name, slug: category.slug, description: category.description, productCount: 0 })
+    const category = await prisma.category.create({
+      data: { name, slug, description, parentId: parentValidation.parentId, storeId: req.store.id },
+      include: { parent: { select: categoryParentSelect } },
+    })
+    res.status(201).json(formatAdminCategory(category))
   } catch (error) {
     next(error)
   }
@@ -734,7 +788,7 @@ export const createAdminCategory = async (req, res, next) => {
 export const updateAdminCategory = async (req, res, next) => {
   try {
     const categoryId = Number(req.params.id)
-    const { name, description } = req.body || {}
+    const { name, description, parentId } = req.body || {}
     if (Number.isNaN(categoryId)) {
       res.status(400)
       throw new Error('Invalid category ID')
@@ -744,11 +798,23 @@ export const updateAdminCategory = async (req, res, next) => {
       res.status(404)
       throw new Error('Category not found')
     }
+    const data = {
+      ...(name !== undefined ? { name } : {}),
+      ...(description !== undefined ? { description } : {}),
+    }
+    if (parentId !== undefined) {
+      const parentValidation = await validateCategoryParent(req, parentId, existing.id)
+      if (parentValidation.error) {
+        return res.status(parentValidation.statusCode).json({ message: parentValidation.error })
+      }
+      data.parentId = parentValidation.parentId
+    }
     const category = await prisma.category.update({
       where: { id: existing.id },
-      data: { ...(name !== undefined ? { name } : {}), ...(description !== undefined ? { description } : {}) },
+      data,
+      include: { parent: { select: categoryParentSelect } },
     })
-    res.json({ id: category.id, name: category.name, slug: category.slug, description: category.description, productCount: 0 })
+    res.json(formatAdminCategory(category))
   } catch (error) {
     next(error)
   }
@@ -765,6 +831,13 @@ export const deleteAdminCategory = async (req, res, next) => {
     if (!category) {
       res.status(404)
       throw new Error('Category not found')
+    }
+    const child = await prisma.category.findFirst({
+      where: storeScope(req, { parentId: category.id }),
+      select: { id: true },
+    })
+    if (child) {
+      return res.status(409).json({ message: 'Cannot delete a category that has subcategories' })
     }
     await prisma.category.delete({ where: { id: category.id } })
     res.json({ message: 'Category deleted successfully' })

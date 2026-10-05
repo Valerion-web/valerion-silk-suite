@@ -99,6 +99,9 @@ model Category {
   name        String    @unique
   slug        String    @unique
   description String?
+  parentId    Int?
+  parent      Category? @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children    Category[] @relation("CategoryHierarchy")
   products    Product[]
   store       Store     @relation(fields: [storeId], references: [id])
   storeId     Int
@@ -107,6 +110,7 @@ model Category {
 
   @@index([storeId])
   @@index([storeId, slug])
+  @@index([storeId, parentId])
 }
 
 model Brand {
