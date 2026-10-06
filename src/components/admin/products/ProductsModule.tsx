@@ -67,7 +67,7 @@ type ProductRecord = {
   stockStatus?: string;
   featured?: boolean;
   status?: string;
-  variants?: Array<{ size?: string; color?: string; material?: string; stock?: number | string; price?: number | string }>;
+  variants?: Array<{ id?: number; sku?: string; size?: string; color?: string; colorCode?: string; material?: string; stock?: number | string; quantityOnHand?: number; price?: number | string; priceOverride?: number | null }>;
   metaTitle?: string;
   metaDescription?: string;
   urlSlug?: string;
@@ -77,8 +77,10 @@ type ProductRecord = {
 
 type ProductVariant = {
   id: string;
+  sku: string;
   size: string;
   color: string;
+  colorCode: string;
   material: string;
   stock: string;
   price: string;
@@ -182,7 +184,7 @@ const DEFAULT_FORM: ProductFormValues = {
   tags: "",
   images: [],
   variants: [
-    { id: "variant-1", size: "", color: "", material: "", stock: "", price: "" },
+    { id: "variant-1", sku: "", size: "", color: "", colorCode: "", material: "", stock: "", price: "" },
   ],
   featured: false,
   status: "DRAFT",
@@ -2796,13 +2798,15 @@ export function ProductFormPage(): JSX.Element {
               variants: Array.isArray(payload.variants)
                 ? payload.variants.map((variant: any, index: number) => ({
                     id: variant.id ? String(variant.id) : `variant-${index}`,
+                    sku: variant.sku || "",
                     size: variant.size || "",
                     color: variant.color || "",
+                    colorCode: variant.colorCode || "",
                     material: variant.material || "",
-                    stock: parseNumber(variant.stock),
-                    price: parseNumber(variant.price),
+                    stock: parseNumber(variant.quantityOnHand ?? variant.stock),
+                    price: parseNumber(variant.priceOverride ?? variant.price),
                   }))
-                : [{ id: "variant-1", size: "", color: "", material: "", stock: "", price: "" }],
+                : [{ id: "variant-1", sku: "", size: "", color: "", colorCode: "", material: "", stock: "", price: "" }],
               featured: Boolean(payload.featured),
               status: payload.status || "DRAFT",
               metaTitle: payload.metaTitle || "",
@@ -2850,7 +2854,7 @@ export function ProductFormPage(): JSX.Element {
   const addVariant = () => {
     setForm((current) => ({
       ...current,
-      variants: [...current.variants, { id: `variant-${Date.now()}`, size: "", color: "", material: "", stock: "", price: "" }],
+      variants: [...current.variants, { id: `variant-${Date.now()}`, sku: "", size: "", color: "", colorCode: "", material: "", stock: "", price: "" }],
     }));
   };
 
@@ -2930,11 +2934,14 @@ export function ProductFormPage(): JSX.Element {
         tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
         images: cleanImages,
         variants: form.variants.map((variant) => ({
+          ...(Number.isInteger(Number(variant.id)) && Number(variant.id) > 0 ? { id: Number(variant.id) } : {}),
+          ...(variant.sku.trim() ? { sku: variant.sku.trim() } : {}),
           size: variant.size.trim(),
           color: variant.color.trim(),
+          colorCode: variant.colorCode.trim(),
           material: variant.material.trim(),
-          stock: Number(variant.stock) || 0,
-          price: Number(variant.price) || 0,
+          stock: variant.stock.trim() ? Number(variant.stock) : null,
+          price: variant.price.trim() ? Number(variant.price) : null,
         })),
         featured: form.featured,
         status: targetStatus,
@@ -3315,10 +3322,11 @@ export function ProductFormPage(): JSX.Element {
                       Remove
                     </button>
                   </div>
-                  <div className="grid gap-4 lg:grid-cols-5">
+                  <div className="grid gap-4 lg:grid-cols-6">
                     {[
                       { label: "Size", field: "size" },
                       { label: "Color", field: "color" },
+                      { label: "Color code", field: "colorCode", placeholder: "#000000" },
                       { label: "Material", field: "material" },
                     ].map((item) => (
                       <label key={item.field} className="space-y-2 text-sm text-[#081321]">
@@ -3326,7 +3334,9 @@ export function ProductFormPage(): JSX.Element {
                         <input
                           value={variant[item.field as keyof ProductVariant]}
                           onChange={(event) => updateVariant(variant.id, item.field as keyof ProductVariant, event.target.value)}
-                          placeholder={item.label}
+                          placeholder={item.placeholder || item.label}
+                          maxLength={item.field === "colorCode" ? 7 : undefined}
+                          pattern={item.field === "colorCode" ? "^#[0-9a-fA-F]{6}$" : undefined}
                           className="w-full rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-sm text-[#081321] outline-none transition focus:border-[#C9A227]"
                         />
                       </label>

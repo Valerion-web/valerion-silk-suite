@@ -105,7 +105,6 @@ const parseSpreadsheet = async (filePath) => {
     } catch {
       throw new BulkImportInputError('Product XLSX file is invalid or could not be read')
     }
-    warnings = [XLSX_FORMULA_WARNING]
   }
   if (!matrix.length) throw new BulkImportInputError('Product data file is empty')
   const headers = matrix[0].map(headerName)

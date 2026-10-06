@@ -275,6 +275,60 @@ const idempotencyKeyFor = (req) => {
 
 const fingerprintFor = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
 
+export const preparePaymentPendingOrder = async (req) => {
+  const idempotencyKey = idempotencyKeyFor(req)
+  if (!idempotencyKey) {
+    const error = new Error('Order idempotency reference is required')
+    error.statusCode = 400
+    throw error
+  }
+
+  const where = { userId_storeId_idempotencyKey: { userId: req.user.id, storeId: req.store.id, idempotencyKey } }
+  const include = { items: { include: { product: { include: productInclude }, variant: true } }, statusHistory: true }
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const existingOrder = await tx.order.findUnique({ where, include })
+      if (existingOrder) return { order: existingOrder, created: false }
+
+      const totals = await calculateTotals(tx, req, req.body?.couponCode)
+      const shippingAddress = JSON.stringify(req.body?.shippingAddress || {})
+      const billingAddress = JSON.stringify(req.body?.billingAddress || req.body?.shippingAddress || {})
+      const requestFingerprint = fingerprintFor({ shippingAddress, billingAddress, couponCode: req.body?.couponCode || null })
+      const requestContextFingerprint = fingerprintFor({ userId: req.user.id, storeId: req.store.id, idempotencyKey })
+      const order = await tx.order.create({
+        data: {
+          userId: req.user.id,
+          storeId: req.store.id,
+          status: 'AWAITING_PAYMENT',
+          totalPrice: totals.total,
+          currency: 'INR',
+          shippingAddress,
+          billingAddress,
+          idempotencyKey,
+          requestFingerprint,
+          requestContextFingerprint,
+          checkoutSnapshot: {
+            version: 1,
+            discountAmount: totals.discount,
+            coupon: totals.coupon ? { id: totals.coupon.id, code: totals.coupon.code } : null,
+          },
+          items: { create: totals.cart.items.map((item) => ({ productId: item.productId, variantId: item.variantId, quantity: item.quantity, price: priceFor(item) })) },
+          statusHistory: { create: { status: 'AWAITING_PAYMENT', note: 'Order created and awaiting payment', changedById: req.user.id } },
+        },
+        include,
+      })
+
+      return { order, created: true }
+    })
+  } catch (error) {
+    if (error?.code !== 'P2002') throw error
+    const existingOrder = await prisma.order.findUnique({ where, include })
+    if (existingOrder) return { order: existingOrder, created: false }
+    throw error
+  }
+}
+
 export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, requireIdempotency = false } = {}) => {
   if (requireIdempotency && !idempotencyKey) {
     const error = new Error('Payment idempotency reference is required')

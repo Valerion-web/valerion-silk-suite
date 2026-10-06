@@ -313,7 +313,20 @@ export const createGoogleLoginHandler = ({ prismaClient = prisma, verifyCredenti
   let payload
   try {
     payload = await verifyCredential(credential, clientId)
-  } catch {
+  } catch (error) {
+    const safeMessage = String(error?.message ?? '')
+      .replaceAll(credential, '[REDACTED]')
+      .replaceAll(nonce, '[REDACTED]')
+      .replaceAll(clientId, '[REDACTED]')
+      .replace(/[\r\n\t]/g, ' ')
+
+    console.warn(
+      'GOOGLE_VERIFY_ERROR:',
+      String(error?.name ?? 'unknown'),
+      String(error?.code ?? 'unknown'),
+      safeMessage
+    )
+
     return res.status(401).json({ message: 'Google authentication failed' })
   }
 
