@@ -1,7 +1,11 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import multer from 'multer'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 const imageFormats = [
   {
@@ -49,7 +53,7 @@ export const uploadAdminCategoryImage = (req, res, next) => {
     if (!imageFormat) return res.status(400).json({ message: 'The uploaded file is not a supported image' })
 
     const filename = `${crypto.randomUUID()}.${imageFormat.extension}`
-    const uploadDirectory = path.resolve(process.cwd(), 'uploads', 'categories')
+    const uploadDirectory = path.resolve(__dirname, '../uploads', 'categories')
     const imagePath = path.join(uploadDirectory, filename)
     const url = `/uploads/categories/${filename}`
 
