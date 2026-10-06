@@ -99,6 +99,8 @@ model Category {
   name        String    @unique
   slug        String    @unique
   description String?
+  image       String?
+  coverImage  String?
   parentId    Int?
   parent      Category? @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
   children    Category[] @relation("CategoryHierarchy")

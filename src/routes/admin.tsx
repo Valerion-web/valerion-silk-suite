@@ -93,6 +93,19 @@ type CategoryRecord = {
   name?: string;
   slug?: string;
   description?: string;
+  image?: string | null;
+  coverImage?: string | null;
+  color?: string;
+  status?: string;
+  visibility?: string;
+  featured?: boolean;
+  sortOrder?: number;
+  revenueShare?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  seoTitle?: string;
+  seoDescription?: string;
+  keywords?: string[];
   productCount?: number;
   parentId?: number | null;
   parent?: { id: number; name: string; slug?: string } | null;
@@ -402,6 +415,20 @@ function fetchAdmin(path: string, options: RequestInit = {}) {
     }
     return data;
   });
+}
+
+function resolveCategoryAssetUrl(input: string) {
+  if (/^https?:\/\//i.test(input) || !input.startsWith("/uploads/")) return input;
+
+  const configuredApiBaseUrl = String(import.meta.env.VITE_API_BASE_URL || "").trim();
+  const fallbackApiOrigin = import.meta.env.DEV ? "http://localhost:5000" : "https://api.haston.in";
+
+  try {
+    const apiOrigin = new URL(configuredApiBaseUrl || fallbackApiOrigin, fallbackApiOrigin).origin;
+    return new URL(input, `${apiOrigin}/`).toString();
+  } catch {
+    return new URL(input, `${fallbackApiOrigin}/`).toString();
+  }
 }
 
 function withCurrency(value: number | string | undefined, currency = "INR") {
@@ -1809,12 +1836,15 @@ function CategoriesPage() {
   const [mode, setMode] = useState<"create" | "edit">("create");
   const [selectedCategory, setSelectedCategory] = useState<CategoryRecord | null>(null);
   const [saving, setSaving] = useState(false);
+  const [uploadingMedia, setUploadingMedia] = useState({ image: false, coverImage: false });
   const [confirmAction, setConfirmAction] = useState<{ type: "delete" | "archive" | "duplicate"; category: CategoryRecord | null }>({ type: "delete", category: null });
   const [activity, setActivity] = useState<Array<{ id: number; title: string; detail: string; time: string }>>([]);
   const [draft, setDraft] = useState({
     name: "",
     slug: "",
     description: "",
+    image: "",
+    coverImage: "",
     parentId: "" as number | "",
     color: "#D4AF37",
     status: "ACTIVE",
@@ -1833,6 +1863,8 @@ function CategoriesPage() {
       name: "",
       slug: "",
       description: "",
+      image: "",
+      coverImage: "",
       parentId: "" as number | "",
       color: "#D4AF37",
       status: "ACTIVE",
@@ -1861,6 +1893,8 @@ function CategoriesPage() {
               name: item.name || `Collection ${index + 1}`,
               slug: item.slug || slugify(item.name || `collection-${index + 1}`),
               description: item.description || "Curated for the House of Valerion experience.",
+              image: item.image ?? null,
+              coverImage: item.coverImage ?? null,
               productCount: item.productCount ?? (index + 1) * 6,
               parentId: item.parentId ?? null,
               parent: item.parent || null,
@@ -1962,6 +1996,32 @@ function CategoriesPage() {
     setProductFilter("all");
   };
 
+  const uploadCategoryImage = async (file: File, field: "image" | "coverImage") => {
+    const previewField = field === "image" ? "iconPreview" : "coverPreview";
+    const previousPreview = draft[previewField];
+    if (previousPreview.startsWith("blob:")) URL.revokeObjectURL(previousPreview);
+    const previewUrl = URL.createObjectURL(file);
+    setDraft((current) => ({ ...current, [previewField]: previewUrl }));
+    setUploadingMedia((current) => ({ ...current, [field]: true }));
+
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      const response = await fetchAdmin("/categories/images", { method: "POST", body: formData });
+      if (typeof response?.url !== "string" || !response.url.startsWith("/uploads/categories/")) {
+        throw new Error("Image upload did not return a valid path.");
+      }
+      URL.revokeObjectURL(previewUrl);
+      setDraft((current) => ({ ...current, [field]: response.url, [previewField]: response.url }));
+    } catch (err) {
+      URL.revokeObjectURL(previewUrl);
+      setDraft((current) => ({ ...current, [previewField]: current[field] || "" }));
+      toast.error(err instanceof Error ? err.message : "Unable to upload category image", { className: "luxury-toast" });
+    } finally {
+      setUploadingMedia((current) => ({ ...current, [field]: false }));
+    }
+  };
+
   const openCreateComposer = () => {
     setMode("create");
     setSelectedCategory(null);
@@ -1976,6 +2036,8 @@ function CategoriesPage() {
       name: category.name || "",
       slug: category.slug || slugify(category.name || ""),
       description: category.description || "",
+      image: category.image || "",
+      coverImage: category.coverImage || "",
       parentId: category.parentId ?? "",
       color: category.color || "#D4AF37",
       status: category.status || "ACTIVE",
@@ -1985,8 +2047,8 @@ function CategoriesPage() {
       seoTitle: category.seoTitle || "",
       seoDescription: category.seoDescription || "",
       keywords: (category.keywords || []).join(", "),
-      iconPreview: "",
-      coverPreview: "",
+      iconPreview: category.image || "",
+      coverPreview: category.coverImage || "",
     });
     setComposerOpen(true);
   };
@@ -1999,6 +2061,7 @@ function CategoriesPage() {
 
   const handleSave = async (event: FormEvent) => {
     event.preventDefault();
+    if (uploadingMedia.image || uploadingMedia.coverImage) return;
     if (!draft.name.trim()) {
       toast.error("Category name is required.", { className: "luxury-toast" });
       return;
@@ -2014,6 +2077,8 @@ function CategoriesPage() {
       name: draft.name.trim(),
       slug: nextSlug,
       description: draft.description.trim(),
+      image: draft.image || null,
+      coverImage: draft.coverImage || null,
       parentId: draft.parentId === "" ? null : Number(draft.parentId),
       color: draft.color,
       status: draft.status as CategoryRecord["status"],
@@ -2453,7 +2518,7 @@ function CategoriesPage() {
                   <p className="text-[11px] font-semibold uppercase tracking-[0.36em] text-[#D4AF37]">Category editor</p>
                   <h3 className="mt-2 text-2xl font-semibold text-[#041E42]">{mode === "edit" ? "Update category" : "Create new category"}</h3>
                 </div>
-                <button type="button" onClick={closeComposer} className="rounded-full border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-sm font-semibold text-[#041E42] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Cancel</button>
+                <button type="button" onClick={closeComposer} disabled={uploadingMedia.image || uploadingMedia.coverImage} className="rounded-full border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2 text-sm font-semibold text-[#041E42] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8] disabled:opacity-60">Cancel</button>
               </div>
 
               <form onSubmit={handleSave} className="mt-6 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
@@ -2528,25 +2593,27 @@ function CategoriesPage() {
                     </div>
                     <div className="mt-4 grid gap-4 md:grid-cols-2">
                       <label className="text-sm text-[#64748B]">
-                        <span className="mb-2 block font-semibold text-[#041E42]">Icon upload</span>
+                        <span className="mb-2 block font-semibold text-[#041E42]">Category image</span>
                         <div className="rounded-[18px] border border-dashed border-[#E5E7EB] bg-white p-3 text-center">
-                          <input type="file" accept="image/*" onChange={(event) => {
+                          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" disabled={uploadingMedia.image} onChange={(event) => {
                             const file = event.target.files?.[0];
-                            if (!file) return;
-                            const url = URL.createObjectURL(file);
-                            setDraft((current) => ({ ...current, iconPreview: url }));
+                            if (file) void uploadCategoryImage(file, "image");
+                            event.currentTarget.value = "";
                           }} className="w-full text-sm" />
+                          {draft.iconPreview ? <img src={resolveCategoryAssetUrl(draft.iconPreview)} alt="Category image preview" className="mx-auto mt-3 h-20 w-20 rounded-lg object-cover" /> : null}
+                          {uploadingMedia.image ? <span className="mt-2 block text-xs">Uploading...</span> : null}
                         </div>
                       </label>
                       <label className="text-sm text-[#64748B]">
                         <span className="mb-2 block font-semibold text-[#041E42]">Cover image</span>
                         <div className="rounded-[18px] border border-dashed border-[#E5E7EB] bg-white p-3 text-center">
-                          <input type="file" accept="image/*" onChange={(event) => {
+                          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" disabled={uploadingMedia.coverImage} onChange={(event) => {
                             const file = event.target.files?.[0];
-                            if (!file) return;
-                            const url = URL.createObjectURL(file);
-                            setDraft((current) => ({ ...current, coverPreview: url }));
+                            if (file) void uploadCategoryImage(file, "coverImage");
+                            event.currentTarget.value = "";
                           }} className="w-full text-sm" />
+                          {draft.coverPreview ? <img src={resolveCategoryAssetUrl(draft.coverPreview)} alt="Category cover preview" className="mt-3 h-20 w-full rounded-lg object-cover" /> : null}
+                          {uploadingMedia.coverImage ? <span className="mt-2 block text-xs">Uploading...</span> : null}
                         </div>
                       </label>
                       <label className="md:col-span-2 text-sm text-[#64748B]">
@@ -2598,10 +2665,10 @@ function CategoriesPage() {
                   <section className="rounded-[24px] border border-[#E5E7EB] bg-[#F8FAFC] p-5">
                     <h4 className="text-lg font-semibold text-[#041E42]">Actions</h4>
                     <div className="mt-4 flex flex-wrap gap-2">
-                      <button type="submit" disabled={saving} className="rounded-full bg-[#041E42] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#09295D] disabled:opacity-60">
-                        {saving ? "Saving..." : mode === "edit" ? "Update" : "Create"}
+                      <button type="submit" disabled={saving || uploadingMedia.image || uploadingMedia.coverImage} className="rounded-full bg-[#041E42] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#09295D] disabled:opacity-60">
+                        {saving ? "Saving..." : uploadingMedia.image || uploadingMedia.coverImage ? "Uploading..." : mode === "edit" ? "Update" : "Create"}
                       </button>
-                      <button type="button" onClick={closeComposer} className="rounded-full border border-[#E5E7EB] bg-white px-4 py-2.5 text-sm font-semibold text-[#041E42] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8]">Cancel</button>
+                      <button type="button" onClick={closeComposer} disabled={uploadingMedia.image || uploadingMedia.coverImage} className="rounded-full border border-[#E5E7EB] bg-white px-4 py-2.5 text-sm font-semibold text-[#041E42] transition hover:border-[#D4AF37] hover:bg-[#FFF8E8] disabled:opacity-60">Cancel</button>
                     </div>
                   </section>
                 </div>

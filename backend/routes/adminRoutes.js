@@ -2,6 +2,7 @@ import express from 'express'
 import { protect, requireAdmin, requireCapability, requireSuperAdmin } from '../middleware/authMiddleware.js'
 import { requireConcreteStore } from '../middleware/storeMiddleware.js'
 import { receiveBulkProductImportFiles, validateBulkProductImportRequest } from '../controllers/bulkProductImportController.js'
+import { uploadAdminCategoryImage } from '../controllers/categoryImageUploadController.js'
 import {
   getAdminDashboard,
   getAdminAnalytics,
@@ -56,6 +57,7 @@ router.get('/stores', requireCapability('analytics'), getAdminStores)
 router.get('/recent-orders', requireCapability('orders'), getRecentOrders)
 router.post('/products/bulk-import', requireCapability('products'), requireConcreteStore, receiveBulkProductImportFiles, validateBulkProductImportRequest)
 router.post('/product-images', requireCapability('products'), requireConcreteStore, uploadProductImages, createProductImageUpload)
+router.post('/categories/images', requireCapability('catalog'), requireConcreteStore, uploadAdminCategoryImage)
 router.route('/products').get(requireCapability('products'), getAdminProducts).post(requireCapability('products'), requireConcreteStore, createAdminProduct)
 router.route('/products/:id').get(requireCapability('products'), getAdminProductById).put(requireCapability('products'), requireConcreteStore, updateAdminProduct).delete(requireCapability('products'), requireConcreteStore, deleteAdminProduct)
 router.route('/orders').get(requireCapability('orders'), getAdminOrders)
