@@ -342,7 +342,7 @@ export const importBulkProducts = async ({
   temporaryDirectory,
   storeId,
   prismaClient = prisma,
-  uploadDirectory = path.resolve(process.cwd(), 'uploads', 'products'),
+  uploadDirectory = path.resolve(__dirname, '../uploads', 'products'),
 }) => {
   const prepared = await prepareBulkProductImport({ productFilePath, imagesZipPath, temporaryDirectory, storeId, prismaClient })
   const { validationResult, plans, images } = prepared

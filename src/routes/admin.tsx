@@ -93,6 +93,8 @@ type CategoryRecord = {
   name?: string;
   slug?: string;
   description?: string;
+  image?: string | null;
+  coverImage?: string | null;
   productCount?: number;
   parentId?: number | null;
   parent?: { id: number; name: string; slug?: string } | null;
