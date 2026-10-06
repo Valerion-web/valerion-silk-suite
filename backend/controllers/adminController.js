@@ -740,6 +740,8 @@ const formatAdminCategory = (category, productCount = 0) => ({
   name: category.name,
   slug: category.slug,
   description: category.description,
+  image: category.image ?? null,
+  coverImage: category.coverImage ?? null,
   parentId: category.parentId ?? null,
   parent: category.parent ? {
     id: category.parent.id,
@@ -801,7 +803,7 @@ export const getAdminCategories = async (req, res, next) => {
 
 export const createAdminCategory = async (req, res, next) => {
   try {
-    const { name, description, parentId } = req.body || {}
+    const { name, description, parentId, image, coverImage } = req.body || {}
     if (!name) {
       res.status(400)
       throw new Error('Category name is required')
@@ -812,7 +814,7 @@ export const createAdminCategory = async (req, res, next) => {
     }
     const slug = `${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`
     const category = await prisma.category.create({
-      data: { name, slug, description, parentId: parentValidation.parentId, storeId: req.store.id },
+      data: { name, slug, description, image: image || null, coverImage: coverImage || null, parentId: parentValidation.parentId, storeId: req.store.id },
       include: { parent: { select: categoryParentSelect } },
     })
     res.status(201).json(formatAdminCategory(category))
@@ -824,7 +826,7 @@ export const createAdminCategory = async (req, res, next) => {
 export const updateAdminCategory = async (req, res, next) => {
   try {
     const categoryId = Number(req.params.id)
-    const { name, description, parentId } = req.body || {}
+    const { name, description, parentId, image, coverImage } = req.body || {}
     if (Number.isNaN(categoryId)) {
       res.status(400)
       throw new Error('Invalid category ID')
@@ -837,6 +839,8 @@ export const updateAdminCategory = async (req, res, next) => {
     const data = {
       ...(name !== undefined ? { name } : {}),
       ...(description !== undefined ? { description } : {}),
+      ...(image !== undefined ? { image: image || null } : {}),
+      ...(coverImage !== undefined ? { coverImage: coverImage || null } : {}),
     }
     if (parentId !== undefined) {
       const parentValidation = await validateCategoryParent(req, parentId, existing.id)

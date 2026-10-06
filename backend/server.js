@@ -10,6 +10,7 @@ import { resolveStore } from './middleware/storeMiddleware.js'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 dotenv.config({ path: path.resolve(__dirname, '.env') })
+const uploadsRoot = path.resolve(__dirname, 'uploads')
 import prisma from './lib/prisma.js'
 import productRoutes from './routes/productRoutes.js'
 import { categoryRouter, brandRouter } from './routes/productRoutes.js'
@@ -38,7 +39,7 @@ app.use(cors({
 app.use('/api/payments/razorpay/webhook', razorpayWebhookRoutes)
 app.use(express.json())
 app.use(morgan('dev'))
-app.use('/uploads', express.static('uploads'))
+app.use('/uploads', express.static(uploadsRoot))
 app.use('/api', resolveStore)
 app.use('/api', csrfMiddleware)
 app.use('/api/products', productRoutes)

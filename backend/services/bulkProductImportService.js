@@ -4,12 +4,16 @@ import crypto from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { createReadStream } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { parse } from 'csv-parse'
 import { readSheet } from 'read-excel-file/node'
 import yauzl from 'yauzl'
 import prisma from '../lib/prisma.js'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 const IMAGE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp'])
@@ -342,7 +346,7 @@ export const importBulkProducts = async ({
   temporaryDirectory,
   storeId,
   prismaClient = prisma,
-  uploadDirectory = path.resolve(process.cwd(), 'uploads', 'products'),
+  uploadDirectory = path.resolve(__dirname, '../uploads', 'products'),
 }) => {
   const prepared = await prepareBulkProductImport({ productFilePath, imagesZipPath, temporaryDirectory, storeId, prismaClient })
   const { validationResult, plans, images } = prepared
