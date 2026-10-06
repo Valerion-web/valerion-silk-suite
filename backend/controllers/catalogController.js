@@ -143,7 +143,12 @@ export const getCategories = async (req, res, next) => {
       include: { _count: { select: { products: true } } },
       orderBy: { name: 'asc' },
     })
-    res.json(categories.map((category) => ({ ...category, productCount: category._count.products })))
+    res.json(categories.map((category) => ({
+      ...category,
+      image: category.image ?? null,
+      coverImage: category.coverImage ?? null,
+      productCount: category._count.products,
+    })))
   } catch (error) {
     next(error)
   }
@@ -163,7 +168,12 @@ export const getCategoryBySlug = async (req, res, next) => {
       res.status(404)
       throw new Error('Category not found')
     }
-    res.json({ ...category, products: category.products.map(formatProduct) })
+    res.json({
+      ...category,
+      image: category.image ?? null,
+      coverImage: category.coverImage ?? null,
+      products: category.products.map(formatProduct),
+    })
   } catch (error) {
     next(error)
   }
