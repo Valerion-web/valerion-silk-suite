@@ -1107,14 +1107,81 @@ export const deleteAdminUser = async (req, res, next) => {
   }
 }
 
+const normalizeCouponArray = (value) => {
+  if (Array.isArray(value)) return [...new Set(value.filter((entry) => entry !== undefined && entry !== null && String(entry).trim() !== '').map((entry) => Number(entry)))].filter((entry) => Number.isInteger(entry) && entry > 0)
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return []
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed)
+        return normalizeCouponArray(parsed)
+      } catch {
+        return []
+      }
+    }
+    return trimmed.split(',').map((entry) => Number(entry.trim())).filter((entry) => Number.isInteger(entry) && entry > 0)
+  }
+  return []
+}
+
+const resolveCouponRestrictionIds = async (tx, req, productIds, categoryIds) => {
+  const normalizedProductIds = normalizeCouponArray(productIds)
+  const normalizedCategoryIds = normalizeCouponArray(categoryIds)
+
+  const [productMatches, categoryMatches] = await Promise.all([
+    normalizedProductIds.length ? tx.product.findMany({ where: { id: { in: normalizedProductIds }, storeId: req.store.id }, select: { id: true } }) : Promise.resolve([]),
+    normalizedCategoryIds.length ? tx.category.findMany({ where: { id: { in: normalizedCategoryIds }, storeId: req.store.id }, select: { id: true } }) : Promise.resolve([]),
+  ])
+
+  if (normalizedProductIds.length && productMatches.length !== normalizedProductIds.length) {
+    const error = new Error('One or more product IDs are invalid for this store')
+    error.statusCode = 400
+    throw error
+  }
+
+  if (normalizedCategoryIds.length && categoryMatches.length !== normalizedCategoryIds.length) {
+    const error = new Error('One or more category IDs are invalid for this store')
+    error.statusCode = 400
+    throw error
+  }
+
+  return { productIds: normalizedProductIds, categoryIds: normalizedCategoryIds }
+}
+
 export const getAdminCoupons = async (req, res, next) => {
   try {
     if (!prisma.coupon) {
       // Prisma client doesn't have the Coupon model (client not regenerated or migration not applied)
       return res.json([])
     }
-    const coupons = await prisma.coupon.findMany({ where: storeScope(req), orderBy: { createdAt: 'desc' } })
-    res.json(coupons.map((c) => ({ id: c.id, code: c.code, discountType: c.discountType, value: Number(c.value), active: c.active, usageLimit: c.usageLimit, usageCount: c.usageCount, createdAt: c.createdAt })))
+    const coupons = await prisma.coupon.findMany({
+      where: storeScope(req),
+      include: {
+        couponProducts: { select: { productId: true } },
+        couponCategories: { select: { categoryId: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+    res.json(coupons.map((c) => ({
+      id: c.id,
+      code: c.code,
+      discountType: c.discountType,
+      value: Number(c.value),
+      active: c.active,
+      usageLimit: c.usageLimit,
+      usageCount: c.usageCount,
+      userUsageLimit: c.userUsageLimit,
+      minOrderValue: c.minOrderValue,
+      maxOrderValue: c.maxOrderValue,
+      maxDiscount: c.maxDiscount,
+      allowFreeShipping: c.allowFreeShipping,
+      startsAt: c.startsAt,
+      endsAt: c.endsAt,
+      productIds: c.couponProducts.map((entry) => entry.productId),
+      categoryIds: c.couponCategories.map((entry) => entry.categoryId),
+      createdAt: c.createdAt,
+    })))
   } catch (error) {
     next(error)
   }
@@ -1126,13 +1193,43 @@ export const createAdminCoupon = async (req, res, next) => {
       res.status(501)
       throw new Error('Coupon model not available. Run `npx prisma generate` and apply migrations.')
     }
-    const { code, discountType, value, active = true, usageLimit } = req.body || {}
+    const { code, discountType, value, active = true, usageLimit, userUsageLimit, minOrderValue, maxOrderValue, maxDiscount, allowFreeShipping, startsAt, endsAt, productIds, categoryIds } = req.body || {}
     if (!code || Number.isNaN(Number(value))) {
       res.status(400)
       throw new Error('Coupon code and value are required')
     }
-    const created = await prisma.coupon.create({ data: { code: String(code).trim().toUpperCase(), discountType, value: Number(value), active: !!active, usageLimit: usageLimit !== undefined ? Number(usageLimit) : null, storeId: req.store.id } })
-    res.status(201).json({ id: created.id, code: created.code, discountType: created.discountType, value: Number(created.value), active: created.active, usageLimit: created.usageLimit, usageCount: created.usageCount })
+    const restrictionIds = await resolveCouponRestrictionIds(prisma, req, productIds, categoryIds)
+    const created = await prisma.$transaction(async (tx) => {
+      const coupon = await tx.coupon.create({
+        data: {
+          code: String(code).trim().toUpperCase(),
+          discountType,
+          value: Number(value),
+          active: !!active,
+          usageLimit: usageLimit !== undefined && usageLimit !== null && usageLimit !== '' ? Number(usageLimit) : null,
+          userUsageLimit: userUsageLimit !== undefined && userUsageLimit !== null && userUsageLimit !== '' ? Number(userUsageLimit) : null,
+          minOrderValue: minOrderValue !== undefined && minOrderValue !== null && minOrderValue !== '' ? Number(minOrderValue) : null,
+          maxOrderValue: maxOrderValue !== undefined && maxOrderValue !== null && maxOrderValue !== '' ? Number(maxOrderValue) : null,
+          maxDiscount: maxDiscount !== undefined && maxDiscount !== null && maxDiscount !== '' ? Number(maxDiscount) : null,
+          allowFreeShipping: !!allowFreeShipping,
+          startsAt: startsAt ? new Date(startsAt) : null,
+          endsAt: endsAt ? new Date(endsAt) : null,
+          storeId: req.store.id,
+        },
+      })
+
+      if (restrictionIds.productIds.length) {
+        await tx.couponProduct.createMany({ data: restrictionIds.productIds.map((productId) => ({ couponId: coupon.id, productId })) })
+      }
+
+      if (restrictionIds.categoryIds.length) {
+        await tx.couponCategory.createMany({ data: restrictionIds.categoryIds.map((categoryId) => ({ couponId: coupon.id, categoryId })) })
+      }
+
+      return coupon
+    })
+
+    res.status(201).json({ id: created.id, code: created.code, discountType: created.discountType, value: Number(created.value), active: created.active, usageLimit: created.usageLimit, usageCount: created.usageCount, userUsageLimit: created.userUsageLimit, minOrderValue: created.minOrderValue, maxOrderValue: created.maxOrderValue, maxDiscount: created.maxDiscount, allowFreeShipping: created.allowFreeShipping, startsAt: created.startsAt, endsAt: created.endsAt })
   } catch (error) {
     next(error)
   }
@@ -1149,14 +1246,47 @@ export const updateAdminCoupon = async (req, res, next) => {
       res.status(400)
       throw new Error('Invalid coupon ID')
     }
-    const data = { ...(req.body.code !== undefined ? { code: req.body.code } : {}), ...(req.body.discountType !== undefined ? { discountType: req.body.discountType } : {}), ...(req.body.value !== undefined ? { value: Number(req.body.value) } : {}), ...(req.body.active !== undefined ? { active: !!req.body.active } : {}), ...(req.body.usageLimit !== undefined ? { usageLimit: req.body.usageLimit === '' || req.body.usageLimit === null ? null : Number(req.body.usageLimit) } : {}) }
-    const existing = await prisma.coupon.findFirst({ where: storeScope(req, { id: couponId }) })
+
+    const existing = await prisma.coupon.findFirst({ where: storeScope(req, { id: couponId }), include: { couponProducts: true, couponCategories: true } })
     if (!existing) {
       res.status(404)
       throw new Error('Coupon not found')
     }
-    const updated = await prisma.coupon.update({ where: { id: existing.id }, data })
-    res.json({ id: updated.id, code: updated.code, discountType: updated.discountType, value: Number(updated.value), active: updated.active, usageLimit: updated.usageLimit, usageCount: updated.usageCount })
+
+    const data = {
+      ...(req.body.code !== undefined ? { code: String(req.body.code).trim().toUpperCase() } : {}),
+      ...(req.body.discountType !== undefined ? { discountType: req.body.discountType } : {}),
+      ...(req.body.value !== undefined ? { value: Number(req.body.value) } : {}),
+      ...(req.body.active !== undefined ? { active: !!req.body.active } : {}),
+      ...(req.body.usageLimit !== undefined ? { usageLimit: req.body.usageLimit === '' || req.body.usageLimit === null ? null : Number(req.body.usageLimit) } : {}),
+      ...(req.body.userUsageLimit !== undefined ? { userUsageLimit: req.body.userUsageLimit === '' || req.body.userUsageLimit === null ? null : Number(req.body.userUsageLimit) } : {}),
+      ...(req.body.minOrderValue !== undefined ? { minOrderValue: req.body.minOrderValue === '' || req.body.minOrderValue === null ? null : Number(req.body.minOrderValue) } : {}),
+      ...(req.body.maxOrderValue !== undefined ? { maxOrderValue: req.body.maxOrderValue === '' || req.body.maxOrderValue === null ? null : Number(req.body.maxOrderValue) } : {}),
+      ...(req.body.maxDiscount !== undefined ? { maxDiscount: req.body.maxDiscount === '' || req.body.maxDiscount === null ? null : Number(req.body.maxDiscount) } : {}),
+      ...(req.body.allowFreeShipping !== undefined ? { allowFreeShipping: !!req.body.allowFreeShipping } : {}),
+      ...(req.body.startsAt !== undefined ? { startsAt: req.body.startsAt ? new Date(req.body.startsAt) : null } : {}),
+      ...(req.body.endsAt !== undefined ? { endsAt: req.body.endsAt ? new Date(req.body.endsAt) : null } : {}),
+    }
+
+    const restrictionIds = await resolveCouponRestrictionIds(prisma, req, req.body.productIds, req.body.categoryIds)
+    const updated = await prisma.$transaction(async (tx) => {
+      const coupon = await tx.coupon.update({ where: { id: existing.id }, data })
+      if (req.body.productIds !== undefined) {
+        await tx.couponProduct.deleteMany({ where: { couponId: existing.id } })
+        if (restrictionIds.productIds.length) {
+          await tx.couponProduct.createMany({ data: restrictionIds.productIds.map((productId) => ({ couponId: coupon.id, productId })) })
+        }
+      }
+      if (req.body.categoryIds !== undefined) {
+        await tx.couponCategory.deleteMany({ where: { couponId: existing.id } })
+        if (restrictionIds.categoryIds.length) {
+          await tx.couponCategory.createMany({ data: restrictionIds.categoryIds.map((categoryId) => ({ couponId: coupon.id, categoryId })) })
+        }
+      }
+      return coupon
+    })
+
+    res.json({ id: updated.id, code: updated.code, discountType: updated.discountType, value: Number(updated.value), active: updated.active, usageLimit: updated.usageLimit, usageCount: updated.usageCount, userUsageLimit: updated.userUsageLimit, minOrderValue: updated.minOrderValue, maxOrderValue: updated.maxOrderValue, maxDiscount: updated.maxDiscount, allowFreeShipping: updated.allowFreeShipping, startsAt: updated.startsAt, endsAt: updated.endsAt })
   } catch (error) {
     next(error)
   }
@@ -1173,11 +1303,21 @@ export const deleteAdminCoupon = async (req, res, next) => {
       res.status(400)
       throw new Error('Invalid coupon ID')
     }
-    const coupon = await prisma.coupon.findFirst({ where: storeScope(req, { id: couponId }) })
+    const coupon = await prisma.coupon.findFirst({
+      where: storeScope(req, { id: couponId }),
+      include: { usages: { select: { id: true } } },
+    })
     if (!coupon) {
       res.status(404)
       throw new Error('Coupon not found')
     }
+
+    const hasUsageHistory = Number(coupon.usageCount || 0) > 0 || (coupon.usages && coupon.usages.length > 0)
+    if (hasUsageHistory) {
+      res.status(409)
+      throw new Error('This coupon has usage history and cannot be deleted. Deactivate it instead.')
+    }
+
     await prisma.coupon.delete({ where: { id: coupon.id } })
     res.json({ message: 'Coupon deleted successfully' })
   } catch (error) {

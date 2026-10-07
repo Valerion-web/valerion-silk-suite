@@ -103,27 +103,126 @@ const getValidatedLineItems = async (tx, req) => {
   return cart
 }
 
+const normalizeCouponCode = (value) => String(value ?? '').trim().toUpperCase()
+
+const parseCouponNumeric = (value, fallback = null) => {
+  if (value === undefined || value === null || value === '') return fallback
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+const resolveRestrictedCartSubtotal = (cart, coupon) => {
+  if (!coupon) return { eligibleSubtotal: cart.items.reduce((sum, item) => sum + priceFor(item) * item.quantity, 0), matches: true }
+
+  const allowedProductIds = new Set((coupon.couponProducts || []).map((entry) => Number(entry.productId)).filter((value) => Number.isFinite(value)))
+  const allowedCategoryIds = new Set((coupon.couponCategories || []).map((entry) => Number(entry.categoryId)).filter((value) => Number.isFinite(value)))
+
+  if (allowedProductIds.size === 0 && allowedCategoryIds.size === 0) {
+    return { eligibleSubtotal: cart.items.reduce((sum, item) => sum + priceFor(item) * item.quantity, 0), matches: true }
+  }
+
+  const hasProductRestriction = allowedProductIds.size > 0
+  const hasCategoryRestriction = allowedCategoryIds.size > 0
+
+  let eligibleSubtotal = 0
+  for (const item of cart.items) {
+    const productId = Number(item.productId ?? item.product?.id)
+    const categoryId = Number(item.product?.categoryId ?? item.product?.category?.id)
+    const isProductMatch = !hasProductRestriction || allowedProductIds.has(productId)
+    const isCategoryMatch = !hasCategoryRestriction || allowedCategoryIds.has(categoryId)
+    const isEligible = !hasProductRestriction && !hasCategoryRestriction
+      ? true
+      : hasProductRestriction && hasCategoryRestriction
+        ? isProductMatch || isCategoryMatch
+        : hasProductRestriction
+          ? isProductMatch
+          : isCategoryMatch
+    if (isEligible) {
+      eligibleSubtotal += priceFor(item) * item.quantity
+    }
+  }
+
+  return { eligibleSubtotal, matches: eligibleSubtotal > 0 }
+}
+
 export const calculateTotals = async (tx, req, couponCode) => {
   const cart = await getValidatedLineItems(tx, req)
   const subtotal = cart.items.reduce((sum, item) => sum + priceFor(item) * item.quantity, 0)
   let discount = 0
   let coupon = null
+  let eligibleSubtotal = subtotal
 
-  if (couponCode) {
-    coupon = await tx.coupon.findFirst({ where: { storeId: req.store.id, code: String(couponCode).trim().toUpperCase(), active: true } })
+  const normalizedCouponCode = normalizeCouponCode(couponCode)
+  if (normalizedCouponCode) {
+    const couponRecord = await tx.coupon.findFirst({
+      where: { storeId: req.store.id, code: normalizedCouponCode, active: true },
+      include: { couponProducts: { select: { productId: true } }, couponCategories: { select: { categoryId: true } } },
+    })
+
+    const couponId = couponRecord?.id ?? null
+    const [productRestrictions, categoryRestrictions, userUsageCount] = await Promise.all([
+      couponId ? tx.couponProduct.findMany({ where: { couponId }, select: { productId: true } }) : Promise.resolve([]),
+      couponId ? tx.couponCategory.findMany({ where: { couponId }, select: { categoryId: true } }) : Promise.resolve([]),
+      couponId ? tx.couponUsage.count({ where: { couponId, userId: req.user.id } }) : Promise.resolve(0),
+    ])
+
+    coupon = couponRecord || null
+
     const now = new Date()
-    if (!coupon || (coupon.startsAt && coupon.startsAt > now) || (coupon.endsAt && coupon.endsAt < now) || (coupon.usageLimit !== null && coupon.usageCount >= coupon.usageLimit) || (coupon.minOrderValue !== null && subtotal < coupon.minOrderValue)) {
+    if (!coupon || (coupon.startsAt && coupon.startsAt > now) || (coupon.endsAt && coupon.endsAt < now) || (coupon.usageLimit !== null && coupon.usageCount >= coupon.usageLimit) || (coupon.userUsageLimit !== null && userUsageCount >= coupon.userUsageLimit) || (coupon.minOrderValue !== null && subtotal < coupon.minOrderValue)) {
       const error = new Error('Coupon is invalid or not applicable')
       error.statusCode = 400
       throw error
     }
-    discount = coupon.discountType === 'PERCENTAGE' ? subtotal * (coupon.value / 100) : coupon.value
-    discount = Math.min(subtotal, Math.max(0, discount))
+
+    const restrictions = {
+      ...coupon,
+      couponProducts: (coupon.couponProducts || productRestrictions || []).map((entry) => ({ productId: entry.productId })),
+      couponCategories: (coupon.couponCategories || categoryRestrictions || []).map((entry) => ({ categoryId: entry.categoryId })),
+    }
+
+    const resolved = resolveRestrictedCartSubtotal(cart, restrictions)
+    if (!resolved.matches || resolved.eligibleSubtotal <= 0) {
+      const error = new Error('Coupon is invalid or not applicable')
+      error.statusCode = 400
+      throw error
+    }
+
+    eligibleSubtotal = resolved.eligibleSubtotal
+    const maxOrderValue = parseCouponNumeric(coupon.maxOrderValue, null)
+    if (maxOrderValue !== null && eligibleSubtotal > maxOrderValue) {
+      const error = new Error('Coupon is invalid or not applicable')
+      error.statusCode = 400
+      throw error
+    }
+
+    const rawDiscount = coupon.discountType === 'PERCENTAGE'
+      ? eligibleSubtotal * (parseCouponNumeric(coupon.value, 0) / 100)
+      : parseCouponNumeric(coupon.value, 0)
+
+    discount = Math.min(eligibleSubtotal, Math.max(0, rawDiscount))
+    const maxDiscount = parseCouponNumeric(coupon.maxDiscount, null)
+    if (maxDiscount !== null) {
+      discount = Math.min(discount, maxDiscount)
+    }
   }
 
-  const discountedSubtotal = subtotal - discount
-  const shipping = discountedSubtotal >= 15000 ? 0 : 500
-  return { cart, subtotal, discount, shipping, total: discountedSubtotal + shipping, coupon }
+  const discountedSubtotal = Math.max(0, subtotal - discount)
+  const shipping = coupon && coupon.allowFreeShipping ? 0 : discountedSubtotal >= 15000 ? 0 : 500
+  return {
+    cart,
+    subtotal,
+    eligibleSubtotal,
+    discount,
+    shipping,
+    total: discountedSubtotal + shipping,
+    coupon,
+    couponCode: coupon ? coupon.code : null,
+    couponId: coupon ? coupon.id : null,
+    discountAmount: discount,
+    subtotalBeforeDiscount: subtotal,
+    shippingCost: shipping,
+  }
 }
 
 export const getCart = async (req, res, next) => {
@@ -307,6 +406,11 @@ export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, re
       idempotencyKey,
       requestFingerprint,
       requestContextFingerprint,
+      couponId: totals.couponId,
+      couponCode: totals.couponCode,
+      discountAmount: totals.discountAmount,
+      subtotalBeforeDiscount: totals.subtotalBeforeDiscount,
+      shippingCost: totals.shippingCost,
       items: { create: totals.cart.items.map((item) => ({ productId: item.productId, variantId: item.variantId, quantity: item.quantity, price: priceFor(item) })) },
       statusHistory: { create: { status: 'PLACED', note: 'Order placed by customer', changedById: req.user.id } },
     },
@@ -338,7 +442,17 @@ export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, re
     await tx.stockHistory.create({ data: { productId: item.productId, variantId: item.variantId, change: -item.quantity, mode: 'SALE', reason: 'Customer order', referenceId: String(order.id) } })
   }
   await tx.cartItem.deleteMany({ where: { cartId: totals.cart.id } })
-  if (totals.coupon) await tx.coupon.update({ where: { id: totals.coupon.id }, data: { usageCount: { increment: 1 } } })
+  if (totals.coupon) {
+    await tx.coupon.update({ where: { id: totals.coupon.id }, data: { usageCount: { increment: 1 } } })
+    await tx.couponUsage.create({
+      data: {
+        couponId: totals.coupon.id,
+        userId: req.user.id,
+        orderId: order.id,
+        amountDiscounted: totals.discountAmount,
+      },
+    })
+  }
   return { order, created: true }
 }
 
