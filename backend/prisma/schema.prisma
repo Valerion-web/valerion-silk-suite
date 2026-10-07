@@ -58,6 +58,7 @@ model User {
   storeId        Int
   carts          Cart[]
   wishlists      Wishlist[]
+  couponUsages   CouponUsage[]
   adminAssignments AdminAssignment[]
   authIdentities AuthIdentity[]
 
@@ -104,11 +105,12 @@ model Category {
   parentId    Int?
   parent      Category? @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
   children    Category[] @relation("CategoryHierarchy")
-  products    Product[]
-  store       Store     @relation(fields: [storeId], references: [id])
-  storeId     Int
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  products         Product[]
+  couponCategories CouponCategory[]
+  store            Store             @relation(fields: [storeId], references: [id])
+  storeId          Int
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 
   @@index([storeId])
   @@index([storeId, slug])
@@ -181,6 +183,7 @@ model Product {
   orderItems       OrderItem[]
   wishlistItems    WishlistItem[]
   cartItems        CartItem[]
+  couponProducts   CouponProduct[]
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 
@@ -248,24 +251,30 @@ model StockHistory {
 }
 
 model Order {
-  id              Int                  @id @default(autoincrement())
-  user            User                 @relation(fields: [userId], references: [id])
-  userId          Int
-  store           Store                @relation(fields: [storeId], references: [id])
-  storeId         Int
-  status          String               @default("PLACED")
-  totalPrice      Float
-  currency        String               @default("INR")
-  shippingAddress String?
-  billingAddress  String?
-  idempotencyKey   String?
-  requestFingerprint String?
+  id                       Int                  @id @default(autoincrement())
+  user                     User                 @relation(fields: [userId], references: [id])
+  userId                   Int
+  store                    Store                @relation(fields: [storeId], references: [id])
+  storeId                  Int
+  status                   String               @default("PLACED")
+  totalPrice               Float
+  currency                 String               @default("INR")
+  couponId                 Int?
+  couponCode               String?
+  discountAmount           Float?               @default(0)
+  subtotalBeforeDiscount   Float?               @default(0)
+  shippingCost             Float?               @default(0)
+  shippingAddress          String?
+  billingAddress           String?
+  idempotencyKey           String?
+  requestFingerprint       String?
   requestContextFingerprint String?
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
-  items           OrderItem[]
-  statusHistory   OrderStatusHistory[]
-  payments        Payment[]
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
+  items                    OrderItem[]
+  statusHistory            OrderStatusHistory[]
+  couponUsages             CouponUsage[]
+  payments                 Payment[]
 
   @@index([userId])
   @@index([storeId])
@@ -429,23 +438,73 @@ model WishlistItem {
 }
 
 model Coupon {
-  id            Int       @id @default(autoincrement())
-  code          String
-  discountType  String
-  value         Float
-  active        Boolean   @default(true)
-  usageLimit    Int?
-  usageCount    Int       @default(0)
-  minOrderValue Float?
-  startsAt      DateTime?
-  endsAt        DateTime?
-  store         Store     @relation(fields: [storeId], references: [id])
-  storeId       Int
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id                Int               @id @default(autoincrement())
+  code              String
+  discountType      String
+  value             Float
+  active            Boolean           @default(true)
+  usageLimit        Int?
+  usageCount        Int               @default(0)
+  userUsageLimit    Int?
+  maxDiscount       Float?
+  maxOrderValue     Float?
+  allowFreeShipping Boolean           @default(false)
+  minOrderValue     Float?
+  startsAt          DateTime?
+  endsAt            DateTime?
+  store             Store             @relation(fields: [storeId], references: [id])
+  storeId           Int
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  usages            CouponUsage[]
+  couponProducts    CouponProduct[]
+  couponCategories  CouponCategory[]
 
   @@unique([storeId, code])
   @@index([storeId])
+}
+
+model CouponUsage {
+  id               Int      @id @default(autoincrement())
+  coupon           Coupon   @relation(fields: [couponId], references: [id])
+  couponId         Int
+  user             User     @relation(fields: [userId], references: [id])
+  userId           Int
+  order            Order    @relation(fields: [orderId], references: [id])
+  orderId          Int
+  usedAt           DateTime @default(now())
+  amountDiscounted  Float?
+
+  @@unique([couponId, userId, orderId])
+  @@index([couponId])
+  @@index([userId])
+  @@index([orderId])
+}
+
+model CouponProduct {
+  id        Int      @id @default(autoincrement())
+  coupon    Coupon   @relation(fields: [couponId], references: [id])
+  couponId  Int
+  product   Product  @relation(fields: [productId], references: [id])
+  productId Int
+  createdAt DateTime @default(now())
+
+  @@unique([couponId, productId])
+  @@index([couponId])
+  @@index([productId])
+}
+
+model CouponCategory {
+  id         Int      @id @default(autoincrement())
+  coupon     Coupon   @relation(fields: [couponId], references: [id])
+  couponId   Int
+  category   Category @relation(fields: [categoryId], references: [id])
+  categoryId Int
+  createdAt  DateTime @default(now())
+
+  @@unique([couponId, categoryId])
+  @@index([couponId])
+  @@index([categoryId])
 }
 
 model ProductReview {
