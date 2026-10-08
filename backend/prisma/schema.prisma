@@ -315,6 +315,8 @@ model Payment {
   providerPaymentId  String?         @unique
   providerSignature  String?
   idempotencyKey     String?
+  paymentAttemptKey  String?
+  checkoutSnapshot   Json?
   amount             Float
   currency           String          @default("INR")
   status             PaymentStatus   @default(CREATED)
@@ -325,7 +327,8 @@ model Payment {
   @@index([userId, storeId])
   @@index([orderId])
   @@index([idempotencyKey])
-  @@unique([userId, storeId, idempotencyKey])
+  @@index([userId, storeId, idempotencyKey])
+  @@unique([userId, storeId, paymentAttemptKey])
 }
 
 model PaymentWebhookEvent {

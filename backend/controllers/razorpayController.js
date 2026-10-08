@@ -1,7 +1,16 @@
 import crypto from 'node:crypto'
 import prisma from '../lib/prisma.js'
-import { calculateTotals, finalizeOrderFromCart } from './customerCommerceController.js'
-import { createRazorpayOrder as createProviderOrder, verifyRazorpaySignature } from '../services/razorpayService.js'
+import {
+  assertPaymentCheckoutSnapshotMatchesRequest,
+  calculateTotals,
+  createPaymentCheckoutSnapshot,
+  finalizeOrderFromCart,
+} from './customerCommerceController.js'
+import {
+  createRazorpayOrder as createProviderOrder,
+  findRazorpayOrderByReceipt,
+  verifyRazorpaySignature,
+} from '../services/razorpayService.js'
 
 const PAYMENT_CURRENCY = 'INR'
 
@@ -10,13 +19,19 @@ const requestIdempotencyKey = (req) => {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-const receiptFor = (idempotencyKey, userId, storeId) => {
-  const digest = crypto.createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 16)
-  return `haston_${storeId}_${userId}_${digest}`
+const requestPaymentAttemptKey = (req) => {
+  const value = req.body?.paymentAttemptKey
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+const receiptFor = (paymentAttemptKey, userId, storeId) => {
+  const digest = crypto.createHash('sha256').update(`${storeId}:${userId}:${paymentAttemptKey}`).digest('hex').slice(0, 32)
+  return `haston_${digest}`
 }
 
 const publicPaymentOrder = (payment, receipt) => ({
   paymentId: payment.id,
+  paymentAttemptKey: payment.paymentAttemptKey,
   razorpayOrderId: payment.providerOrderId,
   amount: Math.round(payment.amount * 100),
   currency: payment.currency,
@@ -29,70 +44,179 @@ const sanitizedProviderError = (error) => {
   return safeError
 }
 
+const paymentConflict = (message) => Object.assign(new Error(message), { statusCode: 409 })
+
+const isTerminalPaymentStatus = (status) => ['FAILED', 'CANCELLED', 'REFUNDED'].includes(status)
+
+const isRecoverableProviderCreationFailure = (payment) => payment.status === 'FAILED'
+  && !payment.providerOrderId
+  && !payment.providerPaymentId
+  && !payment.orderId
+
+const providerOrderMatches = (providerOrder, { receipt, amountInPaise, currency }) =>
+  typeof providerOrder?.id === 'string'
+  && providerOrder.receipt === receipt
+  && Number(providerOrder.amount) === amountInPaise
+  && providerOrder.currency === currency
+
+const persistProviderOrder = async (payment, providerOrder) => {
+  const updated = await prisma.payment.updateMany({
+    where: { id: payment.id, status: 'CREATED', providerOrderId: null },
+    data: { providerOrderId: providerOrder.id },
+  })
+  if (updated.count === 1) return { ...payment, providerOrderId: providerOrder.id }
+
+  const existing = await prisma.payment.findUnique({ where: { id: payment.id } })
+  if (existing?.providerOrderId === providerOrder.id) return existing
+  throw paymentConflict('Payment attempt changed while saving its Razorpay Order')
+}
+
 export const createRazorpayOrder = async (req, res, next) => {
   const idempotencyKey = requestIdempotencyKey(req)
-  if (!idempotencyKey) {
+  const paymentAttemptKey = requestPaymentAttemptKey(req)
+  if (!idempotencyKey || !/^[A-Za-z0-9_-]{1,128}$/.test(idempotencyKey)) {
     res.status(400)
-    return next(new Error('idempotencyKey is required'))
+    return next(new Error('A valid idempotencyKey is required'))
+  }
+  if (!paymentAttemptKey || !/^[A-Za-z0-9_-]{1,128}$/.test(paymentAttemptKey) || paymentAttemptKey === idempotencyKey) {
+    res.status(400)
+    return next(new Error('A distinct valid paymentAttemptKey is required'))
   }
 
   try {
-    const existingPayment = await prisma.payment.findUnique({
-      where: { userId_storeId_idempotencyKey: { userId: req.user.id, storeId: req.store.id, idempotencyKey } },
-    })
-    if (existingPayment?.providerOrderId) {
-      return res.status(200).json(publicPaymentOrder(existingPayment, receiptFor(idempotencyKey, req.user.id, req.store.id)))
-    }
-    if (existingPayment?.status === 'CREATED') {
-      res.status(409)
-      return next(new Error('Payment order creation is already in progress'))
-    }
+    let attemptResult
+    try {
+      attemptResult = await prisma.$transaction(async (tx) => {
+        const existingAttempt = await tx.payment.findUnique({
+          where: { userId_storeId_paymentAttemptKey: { userId: req.user.id, storeId: req.store.id, paymentAttemptKey } },
+        })
+        if (existingAttempt) {
+          await assertPaymentCheckoutSnapshotMatchesRequest(tx, req, existingAttempt)
+          if (isTerminalPaymentStatus(existingAttempt.status) && !isRecoverableProviderCreationFailure(existingAttempt)) {
+            throw paymentConflict('This payment attempt is terminal; use a new paymentAttemptKey')
+          }
+          return { payment: existingAttempt, created: false }
+        }
 
-    const totals = await prisma.$transaction((tx) => calculateTotals(tx, req, req.body?.couponCode))
-    const amountInPaise = Math.round(totals.total * 100)
-    if (!Number.isSafeInteger(amountInPaise) || amountInPaise < 1) {
-      res.status(400)
-      return next(new Error('Cart total is not payable'))
-    }
+        const finalizedOrder = await tx.order.findUnique({
+          where: { userId_storeId_idempotencyKey: { userId: req.user.id, storeId: req.store.id, idempotencyKey } },
+          select: { id: true },
+        })
+        if (finalizedOrder) throw paymentConflict('This checkout already has a finalized Order')
 
-    let payment
-    if (existingPayment) {
-      payment = await prisma.payment.update({
-        where: { id: existingPayment.id },
-        data: { amount: totals.total, currency: PAYMENT_CURRENCY, status: 'CREATED', providerOrderId: null, providerPaymentId: null, providerSignature: null },
+        const unresolvedAttempt = await tx.payment.findFirst({
+          where: { userId: req.user.id, storeId: req.store.id, idempotencyKey, orderId: null, status: { in: ['CREATED', 'AUTHORIZED', 'CAPTURED'] } },
+          orderBy: { createdAt: 'asc' },
+        })
+        if (unresolvedAttempt) throw paymentConflict('Another payment attempt for this checkout is unresolved')
+
+        const totals = await calculateTotals(tx, req, req.body?.couponCode)
+        const amountInPaise = Math.round(totals.total * 100)
+        if (!Number.isSafeInteger(amountInPaise) || amountInPaise < 1) throw Object.assign(new Error('Cart total is not payable'), { statusCode: 400 })
+
+        const checkoutSnapshot = createPaymentCheckoutSnapshot(totals, req, idempotencyKey)
+        const payment = await tx.payment.create({
+          data: {
+            userId: req.user.id,
+            storeId: req.store.id,
+            provider: 'RAZORPAY',
+            amount: totals.total,
+            currency: PAYMENT_CURRENCY,
+            status: 'CREATED',
+            idempotencyKey,
+            paymentAttemptKey,
+            checkoutSnapshot,
+          },
+        })
+        return { payment, created: true }
+      }, { isolationLevel: 'Serializable' })
+    } catch (error) {
+      if (!['P2002', 'P2034'].includes(error?.code)) throw error
+      const existingAttempt = await prisma.payment.findUnique({
+        where: { userId_storeId_paymentAttemptKey: { userId: req.user.id, storeId: req.store.id, paymentAttemptKey } },
       })
+      if (!existingAttempt) throw paymentConflict('Another payment attempt for this checkout is being created')
+      await prisma.$transaction((tx) => assertPaymentCheckoutSnapshotMatchesRequest(tx, req, existingAttempt))
+      if (existingAttempt.idempotencyKey !== idempotencyKey || (isTerminalPaymentStatus(existingAttempt.status) && !isRecoverableProviderCreationFailure(existingAttempt))) {
+        throw paymentConflict('paymentAttemptKey is associated with an incompatible or terminal attempt')
+      }
+      attemptResult = { payment: existingAttempt, created: false }
+    }
+
+    let payment = attemptResult.payment
+    if (payment.idempotencyKey !== idempotencyKey) return next(paymentConflict('paymentAttemptKey is associated with a different checkout'))
+    const recoverableCreationFailure = isRecoverableProviderCreationFailure(payment)
+    if (isTerminalPaymentStatus(payment.status) && !recoverableCreationFailure) return next(paymentConflict('This payment attempt is terminal; use a new paymentAttemptKey'))
+
+    const amountInPaise = Math.round(Number(payment.amount) * 100)
+    const snapshotAmountInPaise = Math.round(Number(payment.checkoutSnapshot?.total) * 100)
+    if (!Number.isSafeInteger(amountInPaise) || amountInPaise < 1 || amountInPaise !== snapshotAmountInPaise || payment.checkoutSnapshot?.currency !== payment.currency) {
+      return next(paymentConflict('Payment amount does not match its immutable checkout snapshot'))
+    }
+
+    const receipt = receiptFor(payment.paymentAttemptKey, req.user.id, req.store.id)
+    if (payment.orderId || payment.providerOrderId) return res.status(200).json(publicPaymentOrder(payment, receipt))
+    if (payment.status !== 'CREATED' && !recoverableCreationFailure) return next(paymentConflict(`Payment attempt is ${payment.status} and cannot create a Razorpay Order`))
+
+    let providerOrder = null
+    if (!attemptResult.created || recoverableCreationFailure) {
+      try {
+        providerOrder = await findRazorpayOrderByReceipt({ receipt, amount: amountInPaise, currency: payment.currency })
+      } catch (error) {
+        if (['RAZORPAY_RECEIPT_MISMATCH', 'RAZORPAY_RECEIPT_AMBIGUOUS'].includes(error?.code)) return next(paymentConflict(error.message))
+        return next(sanitizedProviderError(error))
+      }
+      if (!providerOrder && recoverableCreationFailure) return next(paymentConflict('The failed payment attempt has no recoverable Razorpay Order; use a new paymentAttemptKey'))
+      if (!providerOrder) return next(paymentConflict('Payment attempt creation is still in progress; retry with the same paymentAttemptKey'))
+      if (recoverableCreationFailure) {
+        const restored = await prisma.payment.updateMany({
+          where: { id: payment.id, status: 'FAILED', providerOrderId: null, providerPaymentId: null, orderId: null },
+          data: { providerOrderId: providerOrder.id, status: 'CREATED' },
+        })
+        if (restored.count !== 1) {
+          const current = await prisma.payment.findUnique({ where: { id: payment.id } })
+          if (current?.providerOrderId !== providerOrder.id) return next(paymentConflict('Payment attempt changed during receipt recovery'))
+          payment = current
+        } else {
+          payment = { ...payment, providerOrderId: providerOrder.id, status: 'CREATED' }
+        }
+        return res.status(200).json(publicPaymentOrder(payment, receipt))
+      }
     } else {
       try {
-        payment = await prisma.payment.create({
-          data: { userId: req.user.id, storeId: req.store.id, provider: 'RAZORPAY', amount: totals.total, currency: PAYMENT_CURRENCY, status: 'CREATED', idempotencyKey },
-        })
-      } catch (error) {
-        if (error?.code !== 'P2002') throw error
-        const concurrentPayment = await prisma.payment.findUnique({
-          where: { userId_storeId_idempotencyKey: { userId: req.user.id, storeId: req.store.id, idempotencyKey } },
-        })
-        if (concurrentPayment?.providerOrderId) {
-          return res.status(200).json(publicPaymentOrder(concurrentPayment, receiptFor(idempotencyKey, req.user.id, req.store.id)))
+        providerOrder = await createProviderOrder({ amountInPaise, currency: payment.currency, receipt })
+      } catch (providerError) {
+        try {
+          providerOrder = await findRazorpayOrderByReceipt({ receipt, amount: amountInPaise, currency: payment.currency })
+        } catch (recoveryError) {
+          if (['RAZORPAY_RECEIPT_MISMATCH', 'RAZORPAY_RECEIPT_AMBIGUOUS'].includes(recoveryError?.code)) return next(paymentConflict(recoveryError.message))
+          await prisma.payment.updateMany({ where: { id: payment.id, status: 'CREATED', providerOrderId: null }, data: { status: 'FAILED' } }).catch(() => {})
+          return next(sanitizedProviderError(providerError))
         }
-        res.status(409)
-        return next(new Error('Payment order creation is already in progress'))
+        if (!providerOrder) {
+          await prisma.payment.updateMany({ where: { id: payment.id, status: 'CREATED', providerOrderId: null }, data: { status: 'FAILED' } }).catch(() => {})
+          return next(sanitizedProviderError(providerError))
+        }
       }
     }
 
-    const receipt = receiptFor(idempotencyKey, req.user.id, req.store.id)
-    try {
-      const providerOrder = await createProviderOrder({ amountInPaise, receipt })
-      const savedPayment = await prisma.payment.update({
-        where: { id: payment.id },
-        data: { providerOrderId: providerOrder.id, status: 'CREATED' },
-      })
-      return res.status(201).json(publicPaymentOrder(savedPayment, receipt))
-    } catch (error) {
-      await prisma.payment.update({ where: { id: payment.id }, data: { status: 'FAILED' } }).catch(() => {})
-      return next(sanitizedProviderError(error))
+    if (!providerOrderMatches(providerOrder, { receipt, amountInPaise, currency: payment.currency })) {
+      return next(paymentConflict('Razorpay Order does not match this Payment attempt'))
     }
+    try {
+      payment = await persistProviderOrder(payment, providerOrder)
+    } catch (saveError) {
+      try {
+        const recoveredOrder = await findRazorpayOrderByReceipt({ receipt, amount: amountInPaise, currency: payment.currency })
+        if (!recoveredOrder || recoveredOrder.id !== providerOrder.id) return next(sanitizedProviderError(saveError))
+        payment = await persistProviderOrder(payment, recoveredOrder)
+      } catch {
+        return next(sanitizedProviderError(saveError))
+      }
+    }
+    return res.status(attemptResult.created ? 201 : 200).json(publicPaymentOrder(payment, receipt))
   } catch (error) {
-    return next(error)
+    return next(error?.statusCode ? error : sanitizedProviderError(error))
   }
 }
 
@@ -116,8 +240,21 @@ export const verifyRazorpayPayment = async (req, res) => {
   if (payment.providerPaymentId && payment.providerPaymentId !== razorpayPaymentId) {
     return res.status(409).json({ message: 'Payment verification conflict' })
   }
-  if (!payment.idempotencyKey) {
+  if (payment.orderId) {
+    return res.status(200).json({ success: true, orderId: payment.orderId, paymentStatus: payment.status })
+  }
+  if (payment.status === 'CREATED' && payment.providerOrderId && !payment.checkoutSnapshot) {
+    return res.status(409).json({ message: 'This payment attempt predates immutable checkout snapshots and must be resolved before verification can continue' })
+  }
+  if (!payment.idempotencyKey || !payment.paymentAttemptKey || !payment.checkoutSnapshot) {
     return res.status(409).json({ message: 'Payment cannot be finalized' })
+  }
+  const storedAmountInPaise = Math.round(Number(payment.amount) * 100)
+  const snapshotAmountInPaise = Math.round(Number(payment.checkoutSnapshot.total) * 100)
+  if (!Number.isSafeInteger(storedAmountInPaise) || !Number.isSafeInteger(snapshotAmountInPaise)
+    || storedAmountInPaise < 1 || storedAmountInPaise !== snapshotAmountInPaise
+    || payment.checkoutSnapshot.currency !== payment.currency) {
+    return res.status(409).json({ message: 'Payment amount does not match its immutable checkout snapshot' })
   }
 
   try {
@@ -128,16 +265,15 @@ export const verifyRazorpayPayment = async (req, res) => {
       if (currentPayment.status !== 'CREATED' || (currentPayment.providerPaymentId && currentPayment.providerPaymentId !== razorpayPaymentId)) {
         throw Object.assign(new Error('Payment has already been finalized'), { statusCode: 409 })
       }
-
-      const currentTotals = await calculateTotals(tx, req, req.body?.couponCode)
-      const currentAmountInPaise = Math.round(currentTotals.total * 100)
-      const storedAmountInPaise = Math.round(Number(currentPayment.amount) * 100)
-      if (!Number.isSafeInteger(currentAmountInPaise) || !Number.isSafeInteger(storedAmountInPaise) || currentAmountInPaise !== storedAmountInPaise) {
-        throw Object.assign(new Error('Cart total no longer matches the payment amount; restart checkout'), { statusCode: 409 })
+      if (!currentPayment.paymentAttemptKey || !currentPayment.checkoutSnapshot
+        || currentPayment.paymentAttemptKey !== payment.paymentAttemptKey
+        || Math.round(Number(currentPayment.amount) * 100) !== snapshotAmountInPaise
+        || currentPayment.currency !== currentPayment.checkoutSnapshot.currency) {
+        throw Object.assign(new Error('Payment attempt snapshot changed before verification'), { statusCode: 409 })
       }
 
       const claimed = await tx.payment.updateMany({
-        where: { id: localPaymentId, userId: req.user.id, storeId: req.store.id, status: 'CREATED', providerPaymentId: null, orderId: null },
+        where: { id: localPaymentId, userId: req.user.id, storeId: req.store.id, status: 'CREATED', providerPaymentId: null, orderId: null, paymentAttemptKey: currentPayment.paymentAttemptKey },
         data: { providerPaymentId: razorpayPaymentId, providerSignature: razorpaySignature, status: 'AUTHORIZED' },
       })
       if (claimed.count !== 1) {
@@ -146,13 +282,46 @@ export const verifyRazorpayPayment = async (req, res) => {
         throw Object.assign(new Error('Payment has already been finalized'), { statusCode: 409 })
       }
 
-      const finalized = await finalizeOrderFromCart(tx, req, { idempotencyKey: currentPayment.idempotencyKey, requireIdempotency: true })
+      const finalized = await finalizeOrderFromCart(tx, req, {
+        idempotencyKey: currentPayment.idempotencyKey,
+        requireIdempotency: true,
+        checkoutSnapshot: currentPayment.checkoutSnapshot,
+      })
+      if (!finalized.created) return { checkoutConflict: true, paymentStatus: 'AUTHORIZED' }
       await tx.payment.update({ where: { id: localPaymentId }, data: { orderId: finalized.order.id } })
       return { orderId: finalized.order.id, paymentStatus: 'AUTHORIZED' }
     })
+    if (result.checkoutConflict) {
+      return res.status(409).json({ message: 'Another payment attempt already finalized this checkout; payment requires reconciliation', paymentStatus: result.paymentStatus })
+    }
     return res.status(200).json({ success: true, orderId: result.orderId, paymentStatus: result.paymentStatus })
   } catch (error) {
-    if (error?.code === 'P2002') return res.status(409).json({ message: 'Payment finalization conflict' })
+    if (error?.code === 'P2002') {
+      try {
+        const recorded = await prisma.payment.updateMany({
+          where: {
+            id: localPaymentId,
+            userId: req.user.id,
+            storeId: req.store.id,
+            provider: 'RAZORPAY',
+            providerOrderId: razorpayOrderId,
+            paymentAttemptKey: payment.paymentAttemptKey,
+            status: 'CREATED',
+            providerPaymentId: null,
+            orderId: null,
+          },
+          data: { providerPaymentId: razorpayPaymentId, providerSignature: razorpaySignature, status: 'AUTHORIZED' },
+        })
+        if (recorded.count === 1) {
+          return res.status(409).json({ message: 'Checkout already finalized by another payment attempt; this Payment requires reconciliation', paymentStatus: 'AUTHORIZED' })
+        }
+        const currentPayment = await prisma.payment.findFirst({ where: { id: localPaymentId, userId: req.user.id, storeId: req.store.id } })
+        if (currentPayment?.orderId) return res.status(200).json({ success: true, orderId: currentPayment.orderId, paymentStatus: currentPayment.status })
+      } catch {
+        return res.status(409).json({ message: 'Payment finalization conflict; Payment requires reconciliation' })
+      }
+      return res.status(409).json({ message: 'Payment finalization conflict; Payment requires reconciliation' })
+    }
     return res.status(error?.statusCode || 500).json({ message: error?.statusCode ? error.message : 'Payment finalization failed' })
   }
 }
