@@ -225,6 +225,81 @@ export const calculateTotals = async (tx, req, couponCode) => {
   }
 }
 
+const paymentCheckoutLineFor = (item) => {
+  const unitPrice = priceFor(item)
+  return {
+    cartItemId: item.id,
+    productId: item.productId,
+    variantId: item.variantId ?? null,
+    quantity: item.quantity,
+    unitPrice,
+    lineAmount: unitPrice * item.quantity,
+  }
+}
+
+export const createPaymentCheckoutSnapshot = (totals, req, idempotencyKey) => {
+  const shippingAddress = JSON.stringify(req.body?.shippingAddress || {})
+  const billingAddress = JSON.stringify(req.body?.billingAddress || req.body?.shippingAddress || {})
+  return {
+    version: 1,
+    cartId: totals.cart.id,
+    items: totals.cart.items.map(paymentCheckoutLineFor),
+    subtotal: totals.subtotal,
+    eligibleSubtotal: totals.eligibleSubtotal,
+    discountAmount: totals.discountAmount,
+    shippingCost: totals.shippingCost,
+    total: totals.total,
+    currency: 'INR',
+    coupon: totals.coupon ? {
+      id: totals.coupon.id,
+      code: totals.coupon.code,
+      eligibleSubtotal: totals.eligibleSubtotal,
+      discountAmount: totals.discountAmount,
+      usageLimit: totals.coupon.usageLimit,
+      userUsageLimit: totals.coupon.userUsageLimit,
+    } : null,
+    shippingAddress,
+    billingAddress,
+    requestFingerprint: fingerprintFor({ shippingAddress, billingAddress, couponCode: req.body?.couponCode || null }),
+    requestContextFingerprint: fingerprintFor({ userId: req.user.id, storeId: req.store.id, idempotencyKey }),
+  }
+}
+
+export const assertPaymentCheckoutSnapshotMatchesRequest = async (tx, req, payment) => {
+  const snapshot = payment.checkoutSnapshot
+  if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.items) || !Number.isInteger(snapshot.cartId)) {
+    const error = new Error('Payment checkout snapshot is unavailable or invalid')
+    error.statusCode = 409
+    throw error
+  }
+
+  const idempotencyKey = typeof req.body?.idempotencyKey === 'string' ? req.body.idempotencyKey.trim() : ''
+  const shippingAddress = JSON.stringify(req.body?.shippingAddress || {})
+  const billingAddress = JSON.stringify(req.body?.billingAddress || req.body?.shippingAddress || {})
+  const requestFingerprint = fingerprintFor({ shippingAddress, billingAddress, couponCode: req.body?.couponCode || null })
+  const requestContextFingerprint = fingerprintFor({ userId: req.user.id, storeId: req.store.id, idempotencyKey })
+  if (payment.idempotencyKey !== idempotencyKey || snapshot.requestFingerprint !== requestFingerprint || snapshot.requestContextFingerprint !== requestContextFingerprint) {
+    const error = new Error('Payment attempt key was reused with different checkout context')
+    error.statusCode = 409
+    throw error
+  }
+
+  if (payment.orderId) return snapshot
+
+  const cart = await findCart(tx, req)
+  const currentLines = (cart?.items || []).map(paymentCheckoutLineFor)
+  const savedLines = [...snapshot.items].sort((left, right) => left.cartItemId - right.cartItemId)
+  if (!cart || cart.id !== snapshot.cartId || currentLines.length !== savedLines.length || currentLines.some((line, index) => {
+    const saved = savedLines[index]
+    return line.cartItemId !== saved.cartItemId || line.productId !== saved.productId || line.variantId !== (saved.variantId ?? null) || line.quantity !== saved.quantity || line.unitPrice !== saved.unitPrice || line.lineAmount !== saved.lineAmount
+  })) {
+    const error = new Error('Payment attempt key was reused with a changed cart')
+    error.statusCode = 409
+    throw error
+  }
+  return snapshot
+}
+
 export const getCart = async (req, res, next) => {
   try {
     const cart = await findCart(prisma, req)
@@ -374,7 +449,75 @@ const idempotencyKeyFor = (req) => {
 
 const fingerprintFor = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
 
-export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, requireIdempotency = false } = {}) => {
+const totalsFromPaymentSnapshot = async (tx, req, snapshot) => {
+  const invalidSnapshot = () => Object.assign(new Error('Payment checkout snapshot is invalid'), { statusCode: 409 })
+  if (snapshot?.version !== 1 || snapshot.currency !== 'INR' || !Number.isInteger(snapshot.cartId) || !Array.isArray(snapshot.items) || snapshot.items.length === 0) throw invalidSnapshot()
+
+  const productIds = [...new Set(snapshot.items.map((item) => Number(item.productId)).filter(Number.isInteger))]
+  if (productIds.length !== new Set(snapshot.items.map((item) => item.productId)).size) throw invalidSnapshot()
+  const products = await tx.product.findMany({ where: { id: { in: productIds }, storeId: req.store.id }, include: productInclude })
+  const productById = new Map(products.map((product) => [product.id, product]))
+  const items = snapshot.items.map((line) => {
+    const product = productById.get(line.productId)
+    const cartItemId = Number(line.cartItemId)
+    const quantity = Number(line.quantity)
+    const unitPrice = Number(line.unitPrice)
+    const lineAmount = Number(line.lineAmount)
+    const variantId = line.variantId == null ? null : Number(line.variantId)
+    const variant = variantId == null ? null : product?.variants?.find((candidate) => candidate.id === variantId)
+    if (!product || product.status !== 'ACTIVE' || !Number.isInteger(cartItemId) || cartItemId < 1 || !Number.isInteger(quantity) || quantity < 1 || !Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isFinite(lineAmount) || Math.round(unitPrice * quantity * 100) !== Math.round(lineAmount * 100) || (variantId != null && (!variant || variant.productId !== product.id || variant.status !== 'ACTIVE'))) throw invalidSnapshot()
+    return {
+      id: cartItemId,
+      cartId: snapshot.cartId,
+      productId: product.id,
+      variantId,
+      quantity,
+      product,
+      variant,
+      snapshotUnitPrice: unitPrice,
+      snapshotLineAmount: lineAmount,
+    }
+  })
+
+  const subtotal = Number(snapshot.subtotal)
+  const eligibleSubtotal = Number(snapshot.eligibleSubtotal)
+  const discountAmount = Number(snapshot.discountAmount)
+  const shippingCost = Number(snapshot.shippingCost)
+  const total = Number(snapshot.total)
+  const computedSubtotal = items.reduce((sum, item) => sum + item.snapshotLineAmount, 0)
+  const idempotencyKey = typeof req.body?.idempotencyKey === 'string' ? req.body.idempotencyKey.trim() : ''
+  const expectedContextFingerprint = fingerprintFor({ userId: req.user.id, storeId: req.store.id, idempotencyKey })
+  if (![subtotal, eligibleSubtotal, discountAmount, shippingCost, total].every(Number.isFinite)
+    || subtotal < 0 || eligibleSubtotal < 0 || eligibleSubtotal > subtotal || discountAmount < 0 || discountAmount > subtotal || shippingCost < 0 || total < 0
+    || Math.round(computedSubtotal * 100) !== Math.round(subtotal * 100)
+    || Math.round(total * 100) !== Math.round((Math.max(0, subtotal - discountAmount) + shippingCost) * 100)
+    || typeof snapshot.shippingAddress !== 'string'
+    || typeof snapshot.billingAddress !== 'string'
+    || typeof snapshot.requestFingerprint !== 'string'
+    || snapshot.requestContextFingerprint !== expectedContextFingerprint) throw invalidSnapshot()
+
+  const coupon = snapshot.coupon == null ? null : snapshot.coupon
+  if (coupon && (!Number.isInteger(coupon.id)
+    || typeof coupon.code !== 'string'
+    || (coupon.usageLimit != null && (!Number.isInteger(coupon.usageLimit) || coupon.usageLimit < 0))
+    || (coupon.userUsageLimit != null && (!Number.isInteger(coupon.userUsageLimit) || coupon.userUsageLimit < 0)))) throw invalidSnapshot()
+  return {
+    cart: { id: snapshot.cartId, items },
+    subtotal,
+    eligibleSubtotal,
+    discount: discountAmount,
+    discountAmount,
+    shipping: shippingCost,
+    shippingCost,
+    total,
+    coupon,
+    couponId: coupon?.id ?? null,
+    couponCode: coupon?.code ?? null,
+    subtotalBeforeDiscount: subtotal,
+  }
+}
+
+export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, requireIdempotency = false, checkoutSnapshot = null } = {}) => {
   if (requireIdempotency && !idempotencyKey) {
     const error = new Error('Payment idempotency reference is required')
     error.statusCode = 400
@@ -389,11 +532,13 @@ export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, re
     if (existingOrder) return { order: existingOrder, created: false }
   }
 
-  const totals = await calculateTotals(tx, req, req.body?.couponCode)
-  const shippingAddress = JSON.stringify(req.body?.shippingAddress || {})
-  const billingAddress = JSON.stringify(req.body?.billingAddress || req.body?.shippingAddress || {})
-  const requestFingerprint = fingerprintFor({ shippingAddress, billingAddress, couponCode: req.body?.couponCode || null })
-  const requestContextFingerprint = fingerprintFor({ userId: req.user.id, storeId: req.store.id, idempotencyKey })
+  const totals = checkoutSnapshot
+    ? await totalsFromPaymentSnapshot(tx, req, checkoutSnapshot)
+    : await calculateTotals(tx, req, req.body?.couponCode)
+  const shippingAddress = checkoutSnapshot ? checkoutSnapshot.shippingAddress : JSON.stringify(req.body?.shippingAddress || {})
+  const billingAddress = checkoutSnapshot ? checkoutSnapshot.billingAddress : JSON.stringify(req.body?.billingAddress || req.body?.shippingAddress || {})
+  const requestFingerprint = checkoutSnapshot?.requestFingerprint || fingerprintFor({ shippingAddress, billingAddress, couponCode: req.body?.couponCode || null })
+  const requestContextFingerprint = checkoutSnapshot?.requestContextFingerprint || fingerprintFor({ userId: req.user.id, storeId: req.store.id, idempotencyKey })
   const order = await tx.order.create({
     data: {
       userId: req.user.id,
@@ -411,7 +556,7 @@ export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, re
       discountAmount: totals.discountAmount,
       subtotalBeforeDiscount: totals.subtotalBeforeDiscount,
       shippingCost: totals.shippingCost,
-      items: { create: totals.cart.items.map((item) => ({ productId: item.productId, variantId: item.variantId, quantity: item.quantity, price: priceFor(item) })) },
+      items: { create: totals.cart.items.map((item) => ({ productId: item.productId, variantId: item.variantId, quantity: item.quantity, price: item.snapshotUnitPrice ?? priceFor(item) })) },
       statusHistory: { create: { status: 'PLACED', note: 'Order placed by customer', changedById: req.user.id } },
     },
     include: { items: { include: { product: { include: productInclude }, variant: true } }, statusHistory: true },
@@ -441,9 +586,40 @@ export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, re
     }
     await tx.stockHistory.create({ data: { productId: item.productId, variantId: item.variantId, change: -item.quantity, mode: 'SALE', reason: 'Customer order', referenceId: String(order.id) } })
   }
-  await tx.cartItem.deleteMany({ where: { cartId: totals.cart.id } })
+  if (checkoutSnapshot) {
+    await tx.cartItem.deleteMany({
+      where: {
+        cartId: checkoutSnapshot.cartId,
+        OR: totals.cart.items.map((item) => ({ id: item.id, productId: item.productId, variantId: item.variantId, quantity: item.quantity })),
+      },
+    })
+  } else {
+    await tx.cartItem.deleteMany({ where: { cartId: totals.cart.id } })
+  }
   if (totals.coupon) {
-    await tx.coupon.update({ where: { id: totals.coupon.id }, data: { usageCount: { increment: 1 } } })
+    const usageLimit = totals.coupon.usageLimit
+    const userUsageLimit = totals.coupon.userUsageLimit
+    const usageClaim = await tx.coupon.updateMany({
+      where: {
+        id: totals.coupon.id,
+        storeId: req.store.id,
+        ...(usageLimit == null ? {} : { usageCount: { lt: usageLimit } }),
+      },
+      data: { usageCount: { increment: 1 } },
+    })
+    if (usageClaim.count !== 1) {
+      const error = new Error('Coupon usage limit was reached before order finalization')
+      error.statusCode = 409
+      throw error
+    }
+    if (userUsageLimit != null) {
+      const userUsageCount = await tx.couponUsage.count({ where: { couponId: totals.coupon.id, userId: req.user.id } })
+      if (userUsageCount >= userUsageLimit) {
+        const error = new Error('Coupon user usage limit was reached before order finalization')
+        error.statusCode = 409
+        throw error
+      }
+    }
     await tx.couponUsage.create({
       data: {
         couponId: totals.coupon.id,
