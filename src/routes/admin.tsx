@@ -58,6 +58,15 @@ import {
 } from "lucide-react";
 import { hasAdminRole, useAuth } from "@/lib/auth";
 import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
 
 type DashboardSummary = {
   products?: number;
@@ -142,14 +151,39 @@ type UserRecord = {
 
 type CouponRecord = {
   id: number;
-  code?: string;
-  discountType?: string;
-  discount?: number | string;
-  value?: number;
-  expiresAt?: string;
-  active?: boolean;
-  usageLimit?: number | null;
-  usageCount?: number;
+  code: string;
+  discountType: string;
+  value: number;
+  active: boolean;
+  usageLimit: number | null;
+  usageCount: number;
+  userUsageLimit: number | null;
+  minOrderValue: number | null;
+  maxOrderValue: number | null;
+  maxDiscount: number | null;
+  allowFreeShipping: boolean;
+  startsAt: string | null;
+  endsAt: string | null;
+  productIds: number[];
+  categoryIds: number[];
+  createdAt: string;
+};
+
+type CouponFormValues = {
+  code: string;
+  discountType: "PERCENTAGE" | "FIXED";
+  value: string;
+  maxDiscount: string;
+  minOrderValue: string;
+  maxOrderValue: string;
+  usageLimit: string;
+  userUsageLimit: string;
+  startsAt: string;
+  endsAt: string;
+  allowFreeShipping: boolean;
+  active: boolean;
+  productIds: number[];
+  categoryIds: number[];
 };
 
 type ReviewRecord = {
@@ -2918,272 +2952,513 @@ function UsersPage() {
   );
 }
 
-function CouponsPage() {
-  const { isParentContext } = useAdminContext();
-  const [coupons, setCoupons] = useState<CouponRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [query, setQuery] = useState("");
-  const [activeFilter, setActiveFilter] = useState("all");
-  const [selectedCoupon, setSelectedCoupon] = useState<CouponRecord | null>(null);
-  const [form, setForm] = useState({ code: "", discount: "", expiresAt: "", active: true, usageLimit: "" });
-  const [saving, setSaving] = useState(false);
+function couponStatus(coupon: CouponRecord, now: Date) {
+  if (!coupon.active) return "Inactive";
+  if (coupon.startsAt && new Date(coupon.startsAt) > now) return "Scheduled";
+  if (coupon.endsAt && new Date(coupon.endsAt) < now) return "Expired";
+  return "Active";
+}
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        setLoading(true);
-        const data = await fetchAdmin("/coupons");
-        setCoupons(data || []);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Unable to load coupons");
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, []);
+function couponStatusStyle(status: string) {
+  if (status === "Active") return "bg-emerald-50 text-emerald-700 ring-emerald-600/15";
+  if (status === "Scheduled") return "bg-sky-50 text-sky-700 ring-sky-600/15";
+  if (status === "Expired") return "bg-slate-100 text-slate-600 ring-slate-500/15";
+  return "bg-amber-50 text-amber-700 ring-amber-600/15";
+}
 
-  const filtered = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return coupons.filter((coupon) => {
-      const matchesSearch =
-        normalized.length === 0 ||
-        coupon.code?.toLowerCase().includes(normalized) ||
-        String(coupon.discount).includes(normalized);
-      const matchesStatus =
-        activeFilter === "all" ||
-        (activeFilter === "active" && coupon.active) ||
-        (activeFilter === "inactive" && !coupon.active);
-      return matchesSearch && matchesStatus;
-    });
-  }, [coupons, query, activeFilter]);
+function couponValidity(coupon: CouponRecord) {
+  if (!coupon.startsAt && !coupon.endsAt) return "No date limits";
+  const start = coupon.startsAt ? formatDate(coupon.startsAt) : "No start date";
+  const end = coupon.endsAt ? formatDate(coupon.endsAt) : "No end date";
+  return `${start} → ${end}`;
+}
 
-  const handleSelect = (coupon: CouponRecord) => {
-    setSelectedCoupon(coupon);
-    setForm({
-      code: coupon.code || "",
-      discount: String(coupon.value ?? coupon.discount ?? ""),
-      expiresAt: coupon.expiresAt || "",
-      active: Boolean(coupon.active),
-      usageLimit: coupon.usageLimit == null ? "" : String(coupon.usageLimit),
-    });
+function formatCouponCurrency(value: number) {
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+}
+
+async function fetchCouponList() {
+  const response = await fetchAdmin("/coupons");
+  if (!Array.isArray(response)) throw new Error("Unexpected coupons response");
+  return response as CouponRecord[];
+}
+
+function couponFormFromRecord(coupon?: CouponRecord | null): CouponFormValues {
+  const toLocalDateTime = (value: string | null | undefined) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
   };
 
-  const resetForm = () => {
-    setSelectedCoupon(null);
-    setForm({ code: "", discount: "", expiresAt: "", active: true, usageLimit: "" });
+  return {
+    code: coupon?.code || "",
+    discountType: coupon?.discountType.toUpperCase() === "PERCENTAGE" ? "PERCENTAGE" : "FIXED",
+    value: coupon ? String(coupon.value) : "",
+    maxDiscount: coupon?.maxDiscount == null ? "" : String(coupon.maxDiscount),
+    minOrderValue: coupon?.minOrderValue == null ? "" : String(coupon.minOrderValue),
+    maxOrderValue: coupon?.maxOrderValue == null ? "" : String(coupon.maxOrderValue),
+    usageLimit: coupon?.usageLimit == null ? "" : String(coupon.usageLimit),
+    userUsageLimit: coupon?.userUsageLimit == null ? "" : String(coupon.userUsageLimit),
+    startsAt: toLocalDateTime(coupon?.startsAt),
+    endsAt: toLocalDateTime(coupon?.endsAt),
+    allowFreeShipping: coupon?.allowFreeShipping ?? false,
+    active: coupon?.active ?? true,
+    productIds: coupon?.productIds || [],
+    categoryIds: coupon?.categoryIds || [],
+  };
+}
+
+function validateCouponForm(form: CouponFormValues) {
+  const errors: Partial<Record<keyof CouponFormValues, string>> = {};
+  const optionalNumbers: Array<[keyof CouponFormValues, string, boolean]> = [
+    ["maxDiscount", "Maximum discount", false],
+    ["minOrderValue", "Minimum order value", false],
+    ["maxOrderValue", "Maximum order value", false],
+    ["usageLimit", "Total usage limit", true],
+    ["userUsageLimit", "Per-customer usage limit", true],
+  ];
+
+  if (!form.code.trim()) errors.code = "Coupon code is required.";
+  const value = Number(form.value);
+  if (!form.value.trim() || !Number.isFinite(value) || value <= 0) {
+    errors.value = "Enter a discount value greater than zero.";
+  } else if (form.discountType === "PERCENTAGE" && value > 100) {
+    errors.value = "Percentage discounts cannot exceed 100%.";
+  }
+
+  for (const [field, label, integer] of optionalNumbers) {
+    const rawValue = form[field] as string;
+    if (!rawValue.trim()) continue;
+    const numericValue = Number(rawValue);
+    if (!Number.isFinite(numericValue) || numericValue < 0 || (integer && !Number.isInteger(numericValue))) {
+      errors[field] = integer ? `${label} must be a non-negative whole number.` : `${label} must be zero or greater.`;
+    }
+  }
+
+  if (form.minOrderValue.trim() && form.maxOrderValue.trim()
+    && Number(form.maxOrderValue) <= Number(form.minOrderValue)) {
+    errors.maxOrderValue = "Maximum order value must be greater than the minimum.";
+  }
+  if (form.startsAt && form.endsAt && new Date(form.endsAt) <= new Date(form.startsAt)) {
+    errors.endsAt = "End date and time must be later than the start.";
+  }
+  return errors;
+}
+
+function CouponEditorDialog({
+  open,
+  coupon,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean;
+  coupon: CouponRecord | null;
+  onOpenChange: (open: boolean) => void;
+  onSaved: () => Promise<boolean>;
+}) {
+  const [form, setForm] = useState<CouponFormValues>(() => couponFormFromRecord(coupon));
+  const [errors, setErrors] = useState<Partial<Record<keyof CouponFormValues, string>>>({});
+  const [notice, setNotice] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [products, setProducts] = useState<ProductRecord[]>([]);
+  const [categories, setCategories] = useState<CategoryRecord[]>([]);
+  const [loadingOptions, setLoadingOptions] = useState(false);
+  const [optionError, setOptionError] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setForm(couponFormFromRecord(coupon));
+    setErrors({});
+    setNotice("");
+    setSubmitError("");
+  }, [coupon, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoadingOptions(true);
+    setOptionError("");
+    Promise.allSettled([fetchAdmin("/products"), fetchAdmin("/categories")]).then(([productResult, categoryResult]) => {
+      if (cancelled) return;
+      if (productResult.status === "fulfilled" && Array.isArray(productResult.value)) {
+        setProducts(productResult.value as ProductRecord[]);
+      } else {
+        setOptionError("Product options could not be loaded.");
+      }
+      if (categoryResult.status === "fulfilled" && Array.isArray(categoryResult.value)) {
+        setCategories(categoryResult.value as CategoryRecord[]);
+      } else {
+        setOptionError((current) => current ? `${current} Category options could not be loaded.` : "Category options could not be loaded.");
+      }
+      setLoadingOptions(false);
+    });
+    return () => { cancelled = true; };
+  }, [open]);
+
+  const updateField = <K extends keyof CouponFormValues>(field: K, value: CouponFormValues[K]) => {
+    setForm((current) => ({ ...current, [field]: value }));
+    setErrors((current) => ({ ...current, [field]: undefined }));
+    setNotice("");
+    setSubmitError("");
+  };
+
+  const toggleSelection = (field: "productIds" | "categoryIds", id: number) => {
+    const selected = form[field];
+    updateField(field, selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id]);
   };
 
   const handleSubmit = async (event: FormEvent) => {
-    if (isParentContext) return;
     event.preventDefault();
+    if (savingRef.current) return;
+    const normalizedForm = { ...form, code: form.code.trim().toUpperCase() };
+    const validationErrors = validateCouponForm(normalizedForm);
+    setForm(normalizedForm);
+    setErrors(validationErrors);
+    if (Object.keys(validationErrors).length > 0) {
+      setNotice("Review the highlighted fields before saving.");
+      return;
+    }
+
+    savingRef.current = true;
     setSaving(true);
+    setNotice("");
+    setSubmitError("");
+    const initialForm = couponFormFromRecord(coupon);
+    const optionalNumber = (value: string) => value.trim() ? Number(value) : null;
+    const dateValue = (value: string, initialValue: string, originalIso: string | null) => {
+      if (coupon && value === initialValue) return originalIso;
+      return value ? new Date(value).toISOString() : null;
+    };
+    const payload = {
+      code: normalizedForm.code,
+      discountType: normalizedForm.discountType,
+      value: Number(normalizedForm.value),
+      active: normalizedForm.active,
+      usageLimit: optionalNumber(normalizedForm.usageLimit),
+      userUsageLimit: optionalNumber(normalizedForm.userUsageLimit),
+      minOrderValue: optionalNumber(normalizedForm.minOrderValue),
+      maxOrderValue: optionalNumber(normalizedForm.maxOrderValue),
+      maxDiscount: normalizedForm.discountType === "PERCENTAGE"
+        ? optionalNumber(normalizedForm.maxDiscount)
+        : coupon?.discountType.toUpperCase() === "FIXED" ? coupon.maxDiscount : null,
+      allowFreeShipping: normalizedForm.allowFreeShipping,
+      startsAt: dateValue(normalizedForm.startsAt, initialForm.startsAt, coupon?.startsAt ?? null),
+      endsAt: dateValue(normalizedForm.endsAt, initialForm.endsAt, coupon?.endsAt ?? null),
+      productIds: [...normalizedForm.productIds],
+      categoryIds: [...normalizedForm.categoryIds],
+    };
+
     try {
-      const payload = {
-        code: form.code,
-        discountType: "PERCENTAGE",
-        value: Number(form.discount),
-        usageLimit: (form as any).usageLimit,
-        active: form.active,
-        expiresAt: form.expiresAt,
-      };
-      if (selectedCoupon) {
-        const updated = await fetchAdmin(`/coupons/${selectedCoupon.id}`, { method: "PUT", body: JSON.stringify(payload) });
-        setCoupons((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-        toast.success("Coupon updated", { className: "luxury-toast" });
-      } else {
-        const created = await fetchAdmin("/coupons", { method: "POST", body: JSON.stringify(payload) });
-        setCoupons((current) => [created, ...current]);
-        toast.success("Coupon created", { className: "luxury-toast" });
-      }
-      resetForm();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Unable to save coupon", { className: "luxury-toast" });
+      await fetchAdmin(coupon ? `/coupons/${coupon.id}` : "/coupons", {
+        method: coupon ? "PUT" : "POST",
+        body: JSON.stringify(payload),
+      });
+      const refreshed = await onSaved();
+      onOpenChange(false);
+      toast.success(coupon ? "Coupon updated" : "Coupon created", { className: "luxury-toast" });
+      if (!refreshed) toast.error("Coupon saved, but the list could not refresh.", { className: "luxury-toast" });
+    } catch (saveError) {
+      setSubmitError(saveError instanceof Error ? saveError.message : "Unable to save coupon");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
 
-  const handleDelete = async (couponId: number) => {
-    if (isParentContext) return;
-    if (!window.confirm("Delete this coupon?")) return;
+  const inputClassName = "mt-1.5 h-11 w-full rounded-[10px] border border-[#D0D5DD] bg-white px-3.5 text-sm text-[#101828] outline-none transition placeholder:text-[#98A2B3] focus:border-[#C9A227] focus:ring-2 focus:ring-[#C9A227]/15";
+  const fieldError = (field: keyof CouponFormValues) => errors[field]
+    ? <p role="alert" className="mt-1.5 text-xs font-medium text-rose-700">{errors[field]}</p>
+    : null;
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (savingRef.current && !nextOpen) return;
+      onOpenChange(nextOpen);
+    }}>
+      <DialogContent className="block max-h-[92vh] max-w-4xl overflow-y-auto rounded-[16px] border-[#E6E8EC] p-0">
+        <div className="border-b border-[#EAECF0] px-5 py-5 sm:px-7">
+          <DialogHeader className="pr-8 text-left">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#A77E14]">Coupon setup</p>
+            <DialogTitle className="mt-1 text-xl text-[#041E42]">{coupon ? "Edit coupon" : "Create coupon"}</DialogTitle>
+            <DialogDescription className="pt-1 text-sm leading-6 text-[#667085]">Configure the offer, eligibility, and usage window.</DialogDescription>
+          </DialogHeader>
+        </div>
+
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="space-y-7 px-5 py-6 sm:px-7">
+            <section className="space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-[#101828]">Basic details</h3>
+                <p className="mt-1 text-xs text-[#667085]">Set a recognizable code for this promotion.</p>
+              </div>
+              <div className="grid gap-4">
+                <label className="block text-sm font-medium text-[#344054]">
+                  Coupon code <span className="text-rose-600">*</span>
+                  <input autoComplete="off" value={form.code} onChange={(event) => updateField("code", event.target.value)} onBlur={() => updateField("code", form.code.trim().toUpperCase())} placeholder="e.g. VALERION10" aria-invalid={Boolean(errors.code)} className={`${inputClassName} ${errors.code ? "border-rose-400" : ""}`} />
+                  {fieldError("code")}
+                </label>
+              </div>
+            </section>
+
+            <section className="space-y-4 border-t border-[#EAECF0] pt-6">
+              <div><h3 className="text-sm font-semibold text-[#101828]">Discount configuration</h3><p className="mt-1 text-xs text-[#667085]">Choose the discount calculation and any percentage cap.</p></div>
+              <div className="grid gap-4 md:grid-cols-3">
+                <label className="block text-sm font-medium text-[#344054]">Discount type<select value={form.discountType} onChange={(event) => updateField("discountType", event.target.value as CouponFormValues["discountType"])} className={inputClassName}><option value="PERCENTAGE">Percentage</option><option value="FIXED">Fixed amount</option></select></label>
+                <label className="block text-sm font-medium text-[#344054]">Discount value <span className="text-rose-600">*</span><div className="relative"><input type="number" min="0.01" step="0.01" value={form.value} onChange={(event) => updateField("value", event.target.value)} placeholder="0.00" aria-invalid={Boolean(errors.value)} className={`${inputClassName} pr-12 ${errors.value ? "border-rose-400" : ""}`} /><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#667085]">{form.discountType === "PERCENTAGE" ? "%" : "INR"}</span></div>{fieldError("value")}</label>
+                <label className="block text-sm font-medium text-[#344054]">Maximum discount<input type="number" min="0" step="0.01" value={form.maxDiscount} onChange={(event) => updateField("maxDiscount", event.target.value)} disabled={form.discountType !== "PERCENTAGE"} placeholder="No cap" className={`${inputClassName} disabled:cursor-not-allowed disabled:bg-[#F2F4F7]`} />{fieldError("maxDiscount")}</label>
+              </div>
+            </section>
+
+            <section className="space-y-4 border-t border-[#EAECF0] pt-6">
+              <div><h3 className="text-sm font-semibold text-[#101828]">Order eligibility</h3><p className="mt-1 text-xs text-[#667085]">Optionally limit the order subtotal this offer can be used with.</p></div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block text-sm font-medium text-[#344054]">Minimum order value<input type="number" min="0" step="0.01" value={form.minOrderValue} onChange={(event) => updateField("minOrderValue", event.target.value)} placeholder="No minimum" className={inputClassName} />{fieldError("minOrderValue")}</label>
+                <label className="block text-sm font-medium text-[#344054]">Maximum order value<input type="number" min="0" step="0.01" value={form.maxOrderValue} onChange={(event) => updateField("maxOrderValue", event.target.value)} placeholder="No maximum" aria-invalid={Boolean(errors.maxOrderValue)} className={`${inputClassName} ${errors.maxOrderValue ? "border-rose-400" : ""}`} />{fieldError("maxOrderValue")}</label>
+              </div>
+            </section>
+
+            <section className="space-y-4 border-t border-[#EAECF0] pt-6">
+              <div><h3 className="text-sm font-semibold text-[#101828]">Product and category restrictions</h3><p className="mt-1 text-xs text-[#667085]">Leave both lists unselected to apply this coupon to all products.</p></div>
+              {loadingOptions ? <div className="h-36 animate-pulse rounded-[12px] bg-[#F2F4F7]" aria-live="polite" /> : optionError ? <p role="alert" className="text-sm text-rose-700">{optionError}</p> : (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <fieldset className="min-w-0 rounded-[12px] border border-[#E5E7EB] p-3"><legend className="px-1 text-xs font-semibold text-[#344054]">Products</legend><div className="max-h-44 space-y-1 overflow-y-auto">{products.map((product) => <label key={product.id} className="flex cursor-pointer items-center gap-2 rounded-[8px] px-2 py-2 text-sm text-[#344054] hover:bg-[#F8FAFC]"><input type="checkbox" checked={form.productIds.includes(product.id)} onChange={() => toggleSelection("productIds", product.id)} className="h-4 w-4 accent-[#08182F]" /><span className="min-w-0 truncate">{product.name || `Product ${product.id}`}</span></label>)}</div>{products.length === 0 && <p className="p-2 text-xs text-[#667085]">No products available.</p>}</fieldset>
+                  <fieldset className="min-w-0 rounded-[12px] border border-[#E5E7EB] p-3"><legend className="px-1 text-xs font-semibold text-[#344054]">Categories</legend><div className="max-h-44 space-y-1 overflow-y-auto">{categories.map((category) => <label key={category.id} className="flex cursor-pointer items-center gap-2 rounded-[8px] px-2 py-2 text-sm text-[#344054] hover:bg-[#F8FAFC]"><input type="checkbox" checked={form.categoryIds.includes(category.id)} onChange={() => toggleSelection("categoryIds", category.id)} className="h-4 w-4 accent-[#08182F]" /><span className="min-w-0 truncate">{category.name || `Category ${category.id}`}</span></label>)}</div>{categories.length === 0 && <p className="p-2 text-xs text-[#667085]">No categories available.</p>}</fieldset>
+                </div>
+              )}
+              <p className="text-xs text-[#667085]">{form.productIds.length} products · {form.categoryIds.length} categories selected</p>
+            </section>
+
+            <section className="space-y-4 border-t border-[#EAECF0] pt-6">
+              <div><h3 className="text-sm font-semibold text-[#101828]">Usage limits</h3><p className="mt-1 text-xs text-[#667085]">Leave a limit blank to allow unlimited use.</p></div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block text-sm font-medium text-[#344054]">Total usage limit<input type="number" min="0" step="1" value={form.usageLimit} onChange={(event) => updateField("usageLimit", event.target.value)} placeholder="Unlimited" className={inputClassName} />{fieldError("usageLimit")}</label>
+                <label className="block text-sm font-medium text-[#344054]">Per-customer usage limit<input type="number" min="0" step="1" value={form.userUsageLimit} onChange={(event) => updateField("userUsageLimit", event.target.value)} placeholder="Unlimited" className={inputClassName} />{fieldError("userUsageLimit")}</label>
+              </div>
+            </section>
+
+            <section className="space-y-4 border-t border-[#EAECF0] pt-6">
+              <div><h3 className="text-sm font-semibold text-[#101828]">Schedule</h3><p className="mt-1 text-xs text-[#667085]">Leave blank for no date limit.</p></div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block text-sm font-medium text-[#344054]">Start date and time<input type="datetime-local" value={form.startsAt} onChange={(event) => updateField("startsAt", event.target.value)} className={inputClassName} /></label>
+                <label className="block text-sm font-medium text-[#344054]">End date and time<input type="datetime-local" value={form.endsAt} onChange={(event) => updateField("endsAt", event.target.value)} aria-invalid={Boolean(errors.endsAt)} className={`${inputClassName} ${errors.endsAt ? "border-rose-400" : ""}`} />{fieldError("endsAt")}</label>
+              </div>
+            </section>
+
+            <section className="space-y-4 border-t border-[#EAECF0] pt-6">
+              <h3 className="text-sm font-semibold text-[#101828]">Additional settings</h3>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {([["allowFreeShipping", "Allow free shipping"], ["active", "Coupon is active"]] as const).map(([field, label]) => <div key={field} className="flex items-center justify-between gap-4 rounded-[12px] border border-[#E5E7EB] px-4 py-3"><span className="text-sm font-medium text-[#344054]">{label}</span><Switch checked={form[field]} onCheckedChange={(checked) => updateField(field, checked)} aria-label={label} /></div>)}
+              </div>
+            </section>
+
+            {notice && <p role={Object.keys(errors).length ? "alert" : "status"} className={`rounded-[10px] px-3.5 py-3 text-sm ${Object.keys(errors).length ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-800"}`}>{notice}</p>}
+            {submitError && <p role="alert" className="rounded-[10px] bg-rose-50 px-3.5 py-3 text-sm text-rose-700">{submitError}</p>}
+          </div>
+          <DialogFooter className="sticky bottom-0 flex-row justify-end gap-2 border-t border-[#EAECF0] bg-white px-5 py-4 sm:px-7">
+            <button type="button" disabled={saving} onClick={() => onOpenChange(false)} className="inline-flex h-10 items-center justify-center rounded-[10px] border border-[#D0D5DD] px-4 text-sm font-semibold text-[#344054] transition hover:bg-[#F8FAFC] disabled:opacity-50">Cancel</button>
+            <button type="submit" disabled={saving} className="inline-flex h-10 items-center justify-center gap-2 rounded-[10px] bg-[#08182F] px-5 text-sm font-semibold text-white transition hover:bg-[#122744] disabled:opacity-60">{saving && <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />}{saving ? "Saving..." : "Save coupon"}</button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CouponsPage() {
+  const { isParentContext } = useAdminContext();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editingCoupon, setEditingCoupon] = useState<CouponRecord | null>(null);
+  const [coupons, setCoupons] = useState<CouponRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [retryCount, setRetryCount] = useState(0);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [validityDateFilter, setValidityDateFilter] = useState("all");
+  const [createdDateFilter, setCreatedDateFilter] = useState("all");
+  const [pendingAction, setPendingAction] = useState<{ couponId: number; action: "toggle" | "delete" } | null>(null);
+  const [couponToDelete, setCouponToDelete] = useState<CouponRecord | null>(null);
+  const [actionError, setActionError] = useState<{ couponId: number; message: string } | null>(null);
+  const actionPendingRef = useRef(false);
+  const now = new Date();
+  const hasFilters = Boolean(searchTerm || statusFilter !== "all" || typeFilter !== "all" || validityDateFilter !== "all" || createdDateFilter !== "all");
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadCoupons = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const response = await fetchCouponList();
+        if (!cancelled) setCoupons(response);
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load coupons");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void loadCoupons();
+    return () => { cancelled = true; };
+  }, [retryCount]);
+
+  const filteredCoupons = useMemo(() => {
+    const normalizedQuery = searchTerm.trim().toLowerCase();
+    const getDateRange = (filter: string) => {
+      if (filter === "30-days") {
+        const start = new Date(now);
+        start.setDate(start.getDate() - 30);
+        return { start, end: now };
+      }
+      if (filter === "this-month") {
+        return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999) };
+      }
+      return null;
+    };
+    const validityDateRange = getDateRange(validityDateFilter);
+    const createdDateRange = getDateRange(createdDateFilter);
+    return coupons.filter((coupon) => {
+      const status = couponStatus(coupon, now);
+      const matchesSearch = !normalizedQuery || coupon.code.toLowerCase().includes(normalizedQuery);
+      const matchesStatus = statusFilter === "all" || status.toLowerCase() === statusFilter;
+      const matchesType = typeFilter === "all" || coupon.discountType.toLowerCase() === typeFilter;
+      const startsAt = coupon.startsAt ? new Date(coupon.startsAt) : null;
+      const endsAt = coupon.endsAt ? new Date(coupon.endsAt) : null;
+      const matchesValidityDate = !validityDateRange || ((!startsAt || startsAt <= validityDateRange.end) && (!endsAt || endsAt >= validityDateRange.start));
+      const createdAt = typeof coupon.createdAt === "string" ? new Date(coupon.createdAt) : null;
+      const matchesCreatedDate = !createdDateRange || (
+        createdAt !== null
+        && Number.isFinite(createdAt.getTime())
+        && createdAt >= createdDateRange.start
+        && createdAt <= createdDateRange.end
+      );
+      return matchesSearch && matchesStatus && matchesType && matchesValidityDate && matchesCreatedDate;
+    });
+  }, [coupons, createdDateFilter, searchTerm, statusFilter, typeFilter, validityDateFilter]);
+
+  const totalUses = coupons.reduce((total, coupon) => total + (Number(coupon.usageCount) || 0), 0);
+  const activeCoupons = coupons.filter((coupon) => couponStatus(coupon, now) === "Active").length;
+  const metrics = [
+    { label: "Total coupons", value: coupons.length.toLocaleString("en-IN"), icon: Tag, tone: "bg-[#F7F4EA] text-[#9A7616]" },
+    { label: "Active coupons", value: activeCoupons.toLocaleString("en-IN"), icon: CheckCircle2, tone: "bg-[#EDF6F2] text-[#287354]" },
+    { label: "Total uses", value: totalUses.toLocaleString("en-IN"), icon: TrendingUp, tone: "bg-[#EEF3F8] text-[#365B7C]" },
+    { label: "Total discount given", value: "Unavailable", helper: "Discount totals are not returned by this API", icon: CircleDollarSign, tone: "bg-[#F6F0F4] text-[#80536D]" },
+  ];
+
+  const clearFilters = () => {
+    setSearchTerm("");
+    setStatusFilter("all");
+    setTypeFilter("all");
+    setValidityDateFilter("all");
+    setCreatedDateFilter("all");
+  };
+  const openEditor = (coupon: CouponRecord | null = null) => {
+    setEditingCoupon(coupon);
+    setCreateOpen(true);
+  };
+  const refreshCoupons = async () => {
+    setLoading(true);
+    setError("");
     try {
-      await fetchAdmin(`/coupons/${couponId}`, { method: "DELETE" });
-      setCoupons((current) => current.filter((item) => item.id !== couponId));
-      if (selectedCoupon?.id === couponId) resetForm();
+      setCoupons(await fetchCouponList());
+      return true;
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : "Unable to load coupons");
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+  const handleToggle = async (coupon: CouponRecord, active: boolean) => {
+    if (isParentContext || actionPendingRef.current) return;
+    actionPendingRef.current = true;
+    setPendingAction({ couponId: coupon.id, action: "toggle" });
+    setActionError(null);
+    try {
+      await fetchAdmin(`/coupons/${coupon.id}`, { method: "PUT", body: JSON.stringify({ active }) });
+      const refreshed = await refreshCoupons();
+      toast.success(active ? "Coupon activated" : "Coupon deactivated", { className: "luxury-toast" });
+      if (!refreshed) toast.error("Coupon status was updated, but the list could not refresh.", { className: "luxury-toast" });
+      if (couponToDelete?.id === coupon.id) setCouponToDelete(null);
+    } catch (toggleError) {
+      const message = toggleError instanceof Error ? toggleError.message : "Unable to update coupon status";
+      setActionError({ couponId: coupon.id, message });
+      toast.error(message, { className: "luxury-toast" });
+    } finally {
+      actionPendingRef.current = false;
+      setPendingAction(null);
+    }
+  };
+  const handleDelete = async () => {
+    const coupon = couponToDelete;
+    if (!coupon || isParentContext || actionPendingRef.current) return;
+    actionPendingRef.current = true;
+    setPendingAction({ couponId: coupon.id, action: "delete" });
+    setActionError(null);
+    try {
+      await fetchAdmin(`/coupons/${coupon.id}`, { method: "DELETE" });
+      setCouponToDelete(null);
+      const refreshed = await refreshCoupons();
       toast.success("Coupon deleted", { className: "luxury-toast" });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Unable to delete coupon", { className: "luxury-toast" });
+      if (!refreshed) toast.error("Coupon was deleted, but the list could not refresh.", { className: "luxury-toast" });
+    } catch (deleteError) {
+      const message = deleteError instanceof Error ? deleteError.message : "Unable to delete coupon";
+      setActionError({ couponId: coupon.id, message });
+      toast.error(message, { className: "luxury-toast" });
+    } finally {
+      actionPendingRef.current = false;
+      setPendingAction(null);
     }
   };
 
-  if (loading) return <LoadingShell />;
-  if (error) return <ErrorState message={error} />;
+  const selectClassName = "h-11 w-full rounded-[12px] border border-[#E5E7EB] bg-white px-3.5 text-sm text-[#344054] outline-none transition focus:border-[#C9A227] focus:ring-2 focus:ring-[#C9A227]/15";
+  const renderEmptyState = () => (
+    <div className="mx-auto flex max-w-md flex-col items-center px-5 py-14 text-center">
+      <span className="flex h-12 w-12 items-center justify-center rounded-[14px] bg-[#F7F4EA] text-[#9A7616]"><Tag className="h-5 w-5" aria-hidden="true" /></span>
+      <h2 className="mt-4 text-base font-semibold text-[#101828]">{coupons.length ? "No matching coupons" : "No coupons yet"}</h2>
+      <p className="mt-1.5 text-sm leading-6 text-[#667085]">{coupons.length ? "Try changing your search or filters." : "Create your first coupon to start offering discounts to customers."}</p>
+      {coupons.length ? <button type="button" onClick={clearFilters} className="mt-5 rounded-[10px] border border-[#E5E7EB] px-4 py-2 text-sm font-semibold text-[#344054] hover:border-[#C9A227]">Clear filters</button> : !isParentContext && <button type="button" onClick={() => openEditor()} className="mt-5 inline-flex items-center gap-2 rounded-[10px] bg-[#08182F] px-4 py-2 text-sm font-semibold text-white"><Plus className="h-4 w-4" />Create coupon</button>}
+    </div>
+  );
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_20px_60px_-32px_rgba(4,30,66,0.28)]">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.3em] text-[#D4AF37]">Coupon center</p>
-            <h2 className="mt-2 text-xl font-semibold text-[#041E42]">Coupons</h2>
-            {isParentContext && <p className="mt-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#A16207]">Parent context • Read only</p>}
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <label className="block">
-              <span className="sr-only">Search coupons</span>
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search by code or discount"
-                className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
-              />
-            </label>
-            <label className="block">
-              <span className="sr-only">Status</span>
-              <select
-                value={activeFilter}
-                onChange={(event) => setActiveFilter(event.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
-              >
-                <option value="all">All coupons</option>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </label>
-          </div>
+    <div className="min-w-0 space-y-6 py-4">
+      <section className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+        <div><p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#A77E14]">Marketing / Offers</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-[#041E42]">Coupons</h1><p className="mt-2 max-w-xl text-sm leading-6 text-[#667085]">Manage promotional codes, discounts, and customer offers.</p>{isParentContext && <p className="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-[#A16207]">Parent context · Read only</p>}</div>
+        {!isParentContext && <button type="button" onClick={() => openEditor()} className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-[12px] bg-[#08182F] px-4 text-sm font-semibold text-white shadow-[0_10px_24px_-14px_rgba(8,24,47,0.65)] transition hover:bg-[#122744]"><Plus className="h-4 w-4" />Create coupon</button>}
+      </section>
+
+      <section aria-label="Coupon summary" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {metrics.map(({ label, value, helper, icon: Icon, tone }) => <div key={label} className="flex min-h-[124px] items-center justify-between gap-4 rounded-[16px] border border-[#E6E8EC] bg-white p-5 shadow-[0_12px_32px_-24px_rgba(4,30,66,0.32)]"><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#667085]">{label}</p><p className="mt-3 text-2xl font-semibold text-[#101828]">{value}</p>{helper && <p className="mt-1 max-w-[210px] text-xs leading-5 text-[#667085]">{helper}</p>}</div><span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] ${tone}`}><Icon className="h-5 w-5" aria-hidden="true" /></span></div>)}
+      </section>
+
+      <section aria-label="Coupon filters" className="rounded-[16px] border border-[#E6E8EC] bg-white p-4 shadow-[0_12px_32px_-24px_rgba(4,30,66,0.28)] sm:p-5">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(220px,1.6fr)_repeat(4,minmax(140px,1fr))_auto]">
+          <label className="relative block min-w-0 sm:col-span-2 xl:col-span-1"><span className="sr-only">Search coupons by code</span><Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#98A2B3]" aria-hidden="true" /><input type="search" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search coupon codes..." className="h-11 w-full min-w-0 rounded-[12px] border border-[#E5E7EB] pl-10 pr-3.5 text-sm text-[#344054] outline-none focus:border-[#C9A227] focus:ring-2 focus:ring-[#C9A227]/15" /></label>
+          <label><span className="sr-only">Status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className={selectClassName}><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="expired">Expired</option><option value="scheduled">Scheduled</option></select></label>
+          <label><span className="sr-only">Discount type</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} className={selectClassName}><option value="all">All types</option><option value="percentage">Percentage</option><option value="fixed">Fixed</option></select></label>
+          <label><span className="sr-only">Coupon validity dates</span><select value={validityDateFilter} onChange={(event) => setValidityDateFilter(event.target.value)} className={selectClassName}><option value="all">Any validity dates</option><option value="30-days">Valid in last 30 days</option><option value="this-month">Valid this month</option></select></label>
+          <label><span className="sr-only">Coupon creation date</span><select value={createdDateFilter} onChange={(event) => setCreatedDateFilter(event.target.value)} className={selectClassName}><option value="all">Any creation date</option><option value="30-days">Created in last 30 days</option><option value="this-month">Created this month</option></select></label>
+          <button type="button" onClick={clearFilters} disabled={!hasFilters} className="inline-flex h-11 items-center justify-center gap-2 rounded-[12px] border border-[#E5E7EB] px-3.5 text-sm font-medium text-[#475467] transition hover:border-[#C9A227] disabled:cursor-not-allowed disabled:opacity-45"><Filter className="h-4 w-4" aria-hidden="true" />Clear</button>
         </div>
       </section>
 
-      {filtered.length === 0 ? (
-        <EmptyState title="No coupons found" description="Create a new coupon to launch your next luxury promotion." />
-      ) : (
-        <section className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_20px_60px_-32px_rgba(4,30,66,0.28)]">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E5E7EB] text-left text-[#6B7280]">
-                  <th className="py-3 pr-4">Code</th>
-                          <th className="py-3 pr-4">Discount</th>
-                  <th className="py-3 pr-4">Expires</th>
-                  <th className="py-3 pr-4">Status</th>
-                  <th className="py-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((coupon) => (
-                  <tr key={coupon.id} className="border-b border-[#F3F4F6] hover:bg-[#FAFAFA]">
-                    <td className="py-3 pr-4 font-medium text-[#111111]">{coupon.code}</td>
-                            <td className="py-3 pr-4 text-[#4B5563]">{coupon.discountType === 'PERCENTAGE' ? `${coupon.value}%` : coupon.value}</td>
-                            <td className="py-3 pr-4 text-[#4B5563]">{coupon.expiresAt || "No expiry"}</td>
-                    <td className="py-3 pr-4">
-                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${coupon.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-700"}`}>
-                        {coupon.active ? "Active" : "Inactive"}
-                      </span>
-                    </td>
-                    {!isParentContext && <td className="py-3">
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleSelect(coupon)}
-                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-[#041E42] hover:border-[#D4AF37] hover:bg-[#FFF8E8]"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(coupon.id)}
-                          className="rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      {loading ? <section aria-label="Loading coupons" className="rounded-[16px] border border-[#E6E8EC] bg-white p-5"><div className="h-12 animate-pulse rounded-[12px] bg-[#F2F4F7]" /><div className="mt-5 h-64 animate-pulse rounded-[12px] bg-[#F2F4F7]" /></section> : error ? <section role="alert" className="flex flex-col items-start gap-4 rounded-[16px] border border-rose-200 bg-white p-6 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold text-[#101828]">Unable to load coupons</h2><p className="mt-1 text-sm text-[#667085]">{error}</p></div><button type="button" onClick={() => setRetryCount((count) => count + 1)} className="inline-flex h-10 items-center gap-2 rounded-[10px] border border-[#E5E7EB] px-4 text-sm font-semibold text-[#344054]"><RefreshCw className="h-4 w-4" />Retry</button></section> : (
+        <section aria-label="Coupons" className="overflow-hidden rounded-[16px] border border-[#E6E8EC] bg-white shadow-[0_12px_32px_-24px_rgba(4,30,66,0.32)]">
+          <div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[1120px] border-collapse text-left text-sm"><thead><tr className="border-b border-[#EAECF0] bg-[#FAFBFC] text-[11px] font-semibold uppercase tracking-[0.14em] text-[#667085]"><th className="px-5 py-4">Code</th><th className="px-5 py-4">Restrictions</th><th className="px-5 py-4">Type</th><th className="px-5 py-4">Discount</th><th className="px-5 py-4">Min order</th><th className="px-5 py-4">Usage</th><th className="px-5 py-4">Validity</th><th className="px-5 py-4">Status</th>{!isParentContext && <th className="px-5 py-4">Actions</th>}</tr></thead><tbody>{filteredCoupons.length === 0 ? <tr><td colSpan={isParentContext ? 8 : 9} className="px-6 py-2">{renderEmptyState()}</td></tr> : filteredCoupons.map((coupon) => {
+            const status = couponStatus(coupon, now);
+            const restrictions = [coupon.productIds.length ? `${coupon.productIds.length} products` : "", coupon.categoryIds.length ? `${coupon.categoryIds.length} categories` : ""].filter(Boolean);
+            return <tr key={coupon.id} className="border-b border-[#F2F4F7] last:border-0 transition hover:bg-[#FCFCFD]"><td className="whitespace-nowrap px-5 py-4 font-semibold text-[#101828]">{coupon.code}</td><td className="max-w-[220px] px-5 py-4 text-[#667085]">{restrictions.length ? restrictions.join(" · ") : "All products and categories"}</td><td className="whitespace-nowrap px-5 py-4 text-[#475467]">{coupon.discountType.toUpperCase() === "PERCENTAGE" ? "Percentage" : "Fixed"}</td><td className="whitespace-nowrap px-5 py-4 font-medium text-[#101828]">{coupon.discountType.toUpperCase() === "PERCENTAGE" ? `${coupon.value}%` : formatCouponCurrency(coupon.value)}</td><td className="whitespace-nowrap px-5 py-4 text-[#475467]">{coupon.minOrderValue == null ? "—" : formatCouponCurrency(coupon.minOrderValue)}</td><td className="whitespace-nowrap px-5 py-4 text-[#475467]">{coupon.usageCount} / {coupon.usageLimit == null ? "Unlimited" : coupon.usageLimit}</td><td className="whitespace-nowrap px-5 py-4 text-[#475467]">{couponValidity(coupon)}</td><td className="px-5 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${couponStatusStyle(status)}`}>{status}</span></td>{!isParentContext && <td className="px-5 py-4"><div className="flex items-center gap-1.5"><button type="button" onClick={() => openEditor(coupon)} className="rounded-[8px] border border-[#E5E7EB] px-2.5 py-1.5 text-xs font-medium text-[#344054] hover:border-[#C9A227]">Edit</button><button type="button" disabled={pendingAction !== null} onClick={() => void handleToggle(coupon, !coupon.active)} className="rounded-[8px] border border-[#E5E7EB] px-2.5 py-1.5 text-xs font-medium text-[#344054] disabled:opacity-50">{coupon.active ? "Deactivate" : "Activate"}</button><button type="button" disabled={pendingAction !== null} onClick={() => { setActionError(null); setCouponToDelete(coupon); }} className="rounded-[8px] border border-rose-200 px-2.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50">Delete</button></div>{actionError?.couponId === coupon.id && <p role="alert" className="mt-2 max-w-64 text-xs leading-5 text-rose-700">{actionError.message}</p>}</td>}</tr>;
+          })}</tbody></table></div>
+          <div className="space-y-3 p-4 md:hidden">{filteredCoupons.length === 0 ? renderEmptyState() : filteredCoupons.map((coupon) => { const status = couponStatus(coupon, now); const restrictions = [coupon.productIds.length ? `${coupon.productIds.length} products` : "", coupon.categoryIds.length ? `${coupon.categoryIds.length} categories` : ""].filter(Boolean); return <article key={coupon.id} className="rounded-[12px] border border-[#EAECF0] p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="truncate font-semibold text-[#101828]">{coupon.code}</h2><p className="mt-1 text-sm text-[#667085]">{restrictions.length ? restrictions.join(" · ") : "All products and categories"}</p></div><span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${couponStatusStyle(status)}`}>{status}</span></div><dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-xs text-[#667085]">Discount</dt><dd className="font-medium text-[#101828]">{coupon.discountType.toUpperCase() === "PERCENTAGE" ? `${coupon.value}%` : formatCouponCurrency(coupon.value)}</dd></div><div><dt className="text-xs text-[#667085]">Usage</dt><dd className="font-medium text-[#101828]">{coupon.usageCount} / {coupon.usageLimit == null ? "Unlimited" : coupon.usageLimit}</dd></div><div><dt className="text-xs text-[#667085]">Minimum order</dt><dd className="font-medium text-[#101828]">{coupon.minOrderValue == null ? "—" : formatCouponCurrency(coupon.minOrderValue)}</dd></div><div><dt className="text-xs text-[#667085]">Validity</dt><dd className="font-medium text-[#101828]">{couponValidity(coupon)}</dd></div></dl>{!isParentContext && <div className="mt-4 flex flex-wrap gap-2 border-t border-[#F2F4F7] pt-3"><button type="button" onClick={() => openEditor(coupon)} className="rounded-[8px] border border-[#E5E7EB] px-2.5 py-1.5 text-xs font-medium text-[#344054]">Edit</button><button type="button" disabled={pendingAction !== null} onClick={() => void handleToggle(coupon, !coupon.active)} className="rounded-[8px] border border-[#E5E7EB] px-2.5 py-1.5 text-xs font-medium text-[#344054] disabled:opacity-50">{coupon.active ? "Deactivate" : "Activate"}</button><button type="button" disabled={pendingAction !== null} onClick={() => { setActionError(null); setCouponToDelete(coupon); }} className="rounded-[8px] border border-rose-200 px-2.5 py-1.5 text-xs font-medium text-rose-700 disabled:opacity-50">Delete</button></div>}{actionError?.couponId === coupon.id && <p role="alert" className="mt-2 text-xs text-rose-700">{actionError.message}</p>}</article>; })}</div>
         </section>
       )}
 
-      {!isParentContext && <section className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_20px_60px_-32px_rgba(4,30,66,0.28)]">
-        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.3em] text-[#D4AF37]">Coupon editor</p>
-            <h2 className="mt-2 text-xl font-semibold text-[#041E42]">{selectedCoupon ? "Update coupon" : "Create new coupon"}</h2>
-          </div>
-          {selectedCoupon ? (
-            <button
-              type="button"
-              onClick={resetForm}
-              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-[#041E42] hover:border-[#D4AF37] hover:bg-[#FFF8E8]"
-            >
-              New coupon
-            </button>
-          ) : null}
-        </div>
-        <form className="grid gap-4 md:grid-cols-2" onSubmit={handleSubmit}>
-          <label className="text-sm text-slate-600">
-            <span className="mb-2 block font-semibold text-[#041E42]">Code</span>
-            <input
-              value={form.code}
-              onChange={(event) => setForm((current) => ({ ...current, code: event.target.value }))}
-              required
-              className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
-            />
-          </label>
-          <label className="text-sm text-slate-600">
-            <span className="mb-2 block font-semibold text-[#041E42]">Discount</span>
-            <input
-              type="number"
-              value={form.discount}
-              onChange={(event) => setForm((current) => ({ ...current, discount: event.target.value }))}
-              required
-              className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
-            />
-          </label>
-          <label className="text-sm text-slate-600">
-            <span className="mb-2 block font-semibold text-[#041E42]">Expiry date</span>
-            <input
-              type="date"
-              value={form.expiresAt}
-              onChange={(event) => setForm((current) => ({ ...current, expiresAt: event.target.value }))}
-              className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
-            />
-          </label>
-          <label className="text-sm text-slate-600">
-            <span className="mb-2 block font-semibold text-[#041E42]">Usage limit</span>
-            <input
-              type="number"
-              min={0}
-              value={(form as any).usageLimit}
-              onChange={(event) => setForm((current) => ({ ...current, usageLimit: event.target.value }))}
-              className="w-full rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
-            />
-          </label>
-          <label className="flex items-center gap-3 text-sm text-slate-600 md:col-span-2">
-            <input
-              type="checkbox"
-              checked={form.active}
-              onChange={(event) => setForm((current) => ({ ...current, active: event.target.checked }))}
-              className="h-4 w-4 rounded border-slate-300 text-[#041E42] focus:ring-[#D4AF37]"
-            />
-            <span className="font-semibold text-[#041E42]">Active</span>
-          </label>
-          <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center justify-center rounded-full bg-[#041E42] px-5 py-2.5 text-sm font-medium text-white transition hover:bg-[#072e63] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {saving ? "Saving�" : selectedCoupon ? "Update coupon" : "Create coupon"}
-            </button>
-            <p className="text-sm text-[#4B5563]">Coupons can be managed here and applied via the storefront checkout logic.</p>
-          </div>
-        </form>
-      </section>}
+      {!isParentContext && <CouponEditorDialog open={createOpen} coupon={editingCoupon} onSaved={refreshCoupons} onOpenChange={(open) => { setCreateOpen(open); if (!open) setEditingCoupon(null); }} />}
+      {!isParentContext && <Dialog open={couponToDelete !== null} onOpenChange={(open) => { if (actionPendingRef.current && !open) return; if (!open) setCouponToDelete(null); }}><DialogContent className="max-w-lg rounded-[16px] border-[#E6E8EC] p-6"><DialogHeader className="pr-7 text-left"><DialogTitle className="text-lg text-[#041E42]">Delete coupon {couponToDelete?.code}?</DialogTitle><DialogDescription className="pt-2 leading-6 text-[#667085]">This permanently removes the coupon if it has no usage history. Coupons that have been used cannot be deleted; deactivate them instead.</DialogDescription></DialogHeader>{couponToDelete && actionError?.couponId === couponToDelete.id && <p role="alert" className="rounded-[10px] border border-rose-200 bg-rose-50 px-3.5 py-3 text-sm text-rose-700">{actionError.message}</p>}<DialogFooter className="mt-2 flex-col gap-2 sm:flex-row sm:justify-end">{couponToDelete?.active && <button type="button" disabled={pendingAction !== null} onClick={() => void handleToggle(couponToDelete, false)} className="h-10 rounded-[10px] border border-[#D0D5DD] px-4 text-sm font-semibold text-[#344054] disabled:opacity-50">Deactivate instead</button>}<button type="button" disabled={pendingAction !== null} onClick={() => setCouponToDelete(null)} className="h-10 rounded-[10px] border border-[#D0D5DD] px-4 text-sm font-semibold text-[#344054] disabled:opacity-50">Cancel</button><button type="button" disabled={pendingAction !== null || !couponToDelete} onClick={() => void handleDelete()} className="h-10 rounded-[10px] bg-rose-700 px-4 text-sm font-semibold text-white hover:bg-rose-800 disabled:opacity-50">{pendingAction?.action === "delete" ? "Deleting..." : "Delete coupon"}</button></DialogFooter></DialogContent></Dialog>}
     </div>
   );
 }
