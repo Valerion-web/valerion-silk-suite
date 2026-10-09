@@ -2977,10 +2977,22 @@ function formatCouponCurrency(value: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
 }
 
+function normalizeCouponRecord(coupon: unknown): CouponRecord {
+  if (!coupon || typeof coupon !== "object" || Array.isArray(coupon)) {
+    throw new Error("Unexpected coupon record");
+  }
+  const record = coupon as Partial<CouponRecord>;
+  return {
+    ...record,
+    productIds: Array.isArray(record.productIds) ? record.productIds : [],
+    categoryIds: Array.isArray(record.categoryIds) ? record.categoryIds : [],
+  } as CouponRecord;
+}
+
 async function fetchCouponList() {
   const response = await fetchAdmin("/coupons");
   if (!Array.isArray(response)) throw new Error("Unexpected coupons response");
-  return response as CouponRecord[];
+  return response.map(normalizeCouponRecord);
 }
 
 function couponFormFromRecord(coupon?: CouponRecord | null): CouponFormValues {
@@ -3004,8 +3016,8 @@ function couponFormFromRecord(coupon?: CouponRecord | null): CouponFormValues {
     endsAt: toLocalDateTime(coupon?.endsAt),
     allowFreeShipping: coupon?.allowFreeShipping ?? false,
     active: coupon?.active ?? true,
-    productIds: coupon?.productIds || [],
-    categoryIds: coupon?.categoryIds || [],
+    productIds: Array.isArray(coupon?.productIds) ? coupon.productIds : [],
+    categoryIds: Array.isArray(coupon?.categoryIds) ? coupon.categoryIds : [],
   };
 }
 
