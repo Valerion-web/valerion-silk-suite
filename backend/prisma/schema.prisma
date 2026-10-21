@@ -78,6 +78,15 @@ model AuthIdentity {
   @@unique([userId, provider])
 }
 
+model ConsumedPhoneOtp {
+  id        String   @id @default(cuid())
+  digest    String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
 model Address {
   id         Int      @id @default(autoincrement())
   user       User     @relation(fields: [userId], references: [id])
