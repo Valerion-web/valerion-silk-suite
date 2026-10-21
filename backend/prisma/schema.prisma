@@ -78,6 +78,16 @@ model AuthIdentity {
   @@unique([userId, provider])
 }
 
+model PhoneOtpRateLimit {
+  namespace String
+  keyHash   String
+  hits      Int      @default(1)
+  expiresAt DateTime
+
+  @@id([namespace, keyHash])
+  @@index([expiresAt])
+}
+
 model Address {
   id         Int      @id @default(autoincrement())
   user       User     @relation(fields: [userId], references: [id])

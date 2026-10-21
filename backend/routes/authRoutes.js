@@ -1,7 +1,18 @@
 import express from 'express'
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit'
-import { createGoogleLoginHandler, googleLoginNonce, loginUser, logoutUser, registerUser, getProfile } from '../controllers/authController.js'
+import {
+  createGoogleLoginHandler,
+  createPhoneLoginUserHandler,
+  createSendPhoneOtpHandler,
+  getProfile,
+  googleLoginNonce,
+  loginUser,
+  logoutUser,
+  registerUser,
+} from '../controllers/authController.js'
 import { protect } from '../middleware/authMiddleware.js'
+import { createPostgresRateLimitStore } from '../services/postgresRateLimitStore.js'
+import { normalizePhoneNumber } from '../services/phoneOtpService.js'
 
 const router = express.Router()
 
@@ -81,10 +92,40 @@ const googleLoginLimiter = rateLimit({
   handler: generic429,
 })
 
+const phoneNumberKey = (req) => normalizePhoneNumber(req.body?.phone) || 'invalid-phone'
+
+export const createPhoneOtpRateLimiters = ({ prismaClient } = {}) => ({
+  ipLimiter: rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => ipKeyGenerator(req.ip),
+    handler: generic429,
+    passOnStoreError: false,
+    store: createPostgresRateLimitStore({ namespace: 'phone-otp-ip', prismaClient }),
+  }),
+  phoneLimiter: rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: phoneNumberKey,
+    handler: generic429,
+    passOnStoreError: false,
+    store: createPostgresRateLimitStore({ namespace: 'phone-otp-number', prismaClient }),
+  }),
+})
+
 const googleLoginUser = createGoogleLoginHandler()
+const sendPhoneOtp = createSendPhoneOtpHandler()
+const loginPhoneUser = createPhoneLoginUserHandler()
+const { ipLimiter: phoneOtpIpLimiter, phoneLimiter: phoneOtpNumberLimiter } = createPhoneOtpRateLimiters()
 
 router.post('/register', registerLimiter, registerUser)
 router.post('/login', loginLimiter, loginUser)
+router.post('/phone/send-otp', phoneOtpIpLimiter, phoneOtpNumberLimiter, sendPhoneOtp)
+router.post('/phone/login', phoneOtpIpLimiter, phoneOtpNumberLimiter, loginPhoneUser)
 router.get('/google/nonce', protectGoogleLoginRequest, googleLoginNonce)
 router.post('/google', googleLoginLimiter, protectGoogleLoginRequest, googleLoginUser)
 router.post('/logout', protect, logoutUser)

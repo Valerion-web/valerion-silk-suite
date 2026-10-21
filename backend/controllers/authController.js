@@ -6,6 +6,7 @@ import prisma from '../lib/prisma.js'
 import { ADMIN_ROLES, resolveAdminContext } from '../middleware/adminContext.js'
 import { verifyGoogleIdToken } from '../services/googleIdentityService.js'
 import { GOOGLE_NONCE_TTL_MS, googleNonceStore } from '../services/googleNonceStore.js'
+import { normalizePhoneNumber, resolvePhoneOtpProvider } from '../services/phoneOtpService.js'
 
 const getJwtSecret = () => {
   const secret = process.env.JWT_SECRET?.trim()
@@ -253,6 +254,82 @@ const findGoogleIdentity = (prismaClient, providerSubject) => prismaClient.authI
   where: { provider_providerSubject: { provider: 'google', providerSubject } },
   include: { user: true },
 })
+
+const findPhoneIdentity = (prismaClient, providerSubject) => prismaClient.authIdentity.findUnique({
+  where: { provider_providerSubject: { provider: 'phone', providerSubject } },
+  include: { user: true },
+})
+
+const genericPhoneOtpError = (res, statusCode = 400, message = 'Phone verification failed') => {
+  if (!res.headersSent) {
+    res.status(statusCode).json({ message })
+  }
+  return false
+}
+
+export const createSendPhoneOtpHandler = ({
+  messageProvider = resolvePhoneOtpProvider(),
+} = {}) => async (req, res) => {
+  if (!isHastonStoreContext(req)) {
+    return genericPhoneOtpError(res, 409, 'Phone sign-in is available only for the HASTON store')
+  }
+
+  const phone = normalizePhoneNumber(req.body?.phone)
+  if (!phone) {
+    return genericPhoneOtpError(res, 400, 'Invalid phone number.')
+  }
+
+  const providerResult = await messageProvider.send({ phone })
+  if (!providerResult.ok) {
+    return genericPhoneOtpError(res, 503, 'Unable to send OTP right now. Please try again later.')
+  }
+
+  return res.status(200).json({ message: 'OTP sent successfully.' })
+}
+
+export const sendPhoneOtp = createSendPhoneOtpHandler()
+
+export const createPhoneLoginUserHandler = ({ prismaClient = prisma, messageProvider = resolvePhoneOtpProvider() } = {}) => async (req, res) => {
+  if (!isHastonStoreContext(req)) {
+    return genericPhoneOtpError(res, 409, 'Phone sign-in is available only for the HASTON store')
+  }
+
+  const phone = normalizePhoneNumber(req.body?.phone)
+  const submittedOtp = typeof req.body?.otp === 'string' ? req.body.otp.trim() : ''
+
+  if (!phone || !/^\d{4,8}$/.test(submittedOtp)) {
+    return genericPhoneOtpError(res, 400, 'Authentication failed')
+  }
+
+  const verification = await messageProvider.verify({ phone, otp: submittedOtp })
+  if (!verification.ok) {
+    return genericPhoneOtpError(res, 401, 'Authentication failed')
+  }
+
+  try {
+    const identity = await findPhoneIdentity(prismaClient, phone)
+    if (!identity || !isCustomerInCurrentStore(identity.user, req)) {
+      return res.status(401).json({
+        code: 'PHONE_ACCOUNT_NOT_FOUND',
+        message: 'No account is linked to this phone number.',
+      })
+    }
+
+    let token
+    try {
+      token = createToken(identity.user)
+    } catch {
+      return genericPhoneOtpError(res, 500, 'Authentication failed')
+    }
+
+    setAuthCookie(res, token)
+    return res.status(200).json({ user: sanitizeUser(identity.user), message: 'Login successful' })
+  } catch {
+    return genericPhoneOtpError(res, 500, 'Authentication failed')
+  }
+}
+
+export const loginPhoneUser = createPhoneLoginUserHandler()
 
 const isUsableGooglePayload = (payload, clientId, nonce) => {
   if (!payload || typeof payload !== 'object') return false
