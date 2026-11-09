@@ -11,6 +11,7 @@ import {
   findRazorpayOrderByReceipt,
   verifyRazorpaySignature,
 } from '../services/razorpayService.js'
+import { queueShipment } from '../services/shipmentQueue.js'
 
 const PAYMENT_CURRENCY = 'INR'
 
@@ -289,6 +290,7 @@ export const verifyRazorpayPayment = async (req, res) => {
       })
       if (!finalized.created) return { checkoutConflict: true, paymentStatus: 'AUTHORIZED' }
       await tx.payment.update({ where: { id: localPaymentId }, data: { orderId: finalized.order.id } })
+      await queueShipment(tx, finalized.order.id)
       return { orderId: finalized.order.id, paymentStatus: 'AUTHORIZED' }
     })
     if (result.checkoutConflict) {

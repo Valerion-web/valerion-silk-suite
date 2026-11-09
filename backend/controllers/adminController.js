@@ -1,9 +1,14 @@
 import prisma from '../lib/prisma.js'
 import bcrypt from 'bcryptjs'
 import { storeWhere } from '../middleware/storeMiddleware.js'
+import { deleteOrderIfUnshipped } from '../services/orderDeletion.js'
+import { validateShipmentPackageMeasurements } from '../services/shipmentPackageMeasurements.js'
+import { createShipmentOperationsService } from '../services/shipmentOperations.js'
+import { createAdminShipmentOperationsHandler } from '../services/adminShipmentManagement.js'
 
 const adminRoles = ['SUPER_ADMIN', 'ADMIN', 'BRAND_MANAGER', 'INVENTORY_MANAGER', 'ORDER_MANAGER', 'MARKETING_MANAGER']
 const VALID_ORDER_STATUSES = new Set(['PLACED', 'PENDING', 'PROCESSING', 'PACKED', 'SHIPPED', 'DELIVERED', 'CANCELLED'])
+const shipmentOperations = createShipmentOperationsService({ prismaClient: prisma })
 
 const storeScope = (req, where = {}) => {
   return storeWhere(req, where)
@@ -689,10 +694,15 @@ export const deleteAdminOrder = async (req, res, next) => {
       res.status(404)
       throw new Error('Order not found')
     }
-    await prisma.orderItem.deleteMany({ where: { orderId: order.id } })
-    await prisma.order.delete({ where: { id: order.id } })
+    const deleted = await prisma.$transaction((tx) => deleteOrderIfUnshipped(tx, order.id))
+    if (!deleted) {
+      return res.status(409).json({ message: 'Order cannot be deleted while a shipment exists' })
+    }
     res.json({ message: 'Order deleted successfully' })
   } catch (error) {
+    if (error?.code === 'P2003') {
+      return res.status(409).json({ message: 'Order cannot be deleted while a shipment exists' })
+    }
     next(error)
   }
 }
@@ -1537,6 +1547,33 @@ export const getAdminOrderById = async (req, res, next) => {
         store: true,
         items: { include: { product: true, variant: true } },
         statusHistory: { include: { changedBy: true }, orderBy: { createdAt: 'asc' } },
+        shipment: {
+          select: {
+            id: true,
+            status: true,
+            lastError: true,
+            shiprocketOrderId: true,
+            shiprocketShipmentId: true,
+            awbCode: true,
+            courierName: true,
+            trackingStatus: true,
+            trackingStatusAt: true,
+            estimatedDeliveryAt: true,
+            trackingUrl: true,
+            attemptCount: true,
+            lastAttemptAt: true,
+            nextAttemptAt: true,
+            packageWeightKg: true,
+            packageLengthCm: true,
+            packageBreadthCm: true,
+            packageHeightCm: true,
+            packageConfirmedAt: true,
+            packageConfirmedById: true,
+            packageConfirmedBy: { select: { id: true, name: true } },
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
       },
     })
     if (!order) {
@@ -1548,6 +1585,239 @@ export const getAdminOrderById = async (req, res, next) => {
     next(error)
   }
 }
+
+export const confirmAdminShipmentPackage = async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id)
+    if (!Number.isSafeInteger(orderId) || orderId < 1) {
+      return res.status(400).json({ message: 'Invalid order ID' })
+    }
+
+    const adminId = req.user?.id
+    if (!Number.isSafeInteger(adminId) || adminId < 1) {
+      return res.status(401).json({ message: 'Authenticated administrator identity is unavailable' })
+    }
+
+    const body = req.body
+    const allowedFields = new Set([
+      'packageWeightKg',
+      'packageLengthCm',
+      'packageBreadthCm',
+      'packageHeightCm',
+    ])
+    if (
+      !body
+      || typeof body !== 'object'
+      || Array.isArray(body)
+      || Object.keys(body).some((field) => !allowedFields.has(field))
+      || Object.keys(body).length !== allowedFields.size
+    ) {
+      return res.status(400).json({ message: 'Only all four package measurement fields are accepted' })
+    }
+
+    let measurements
+    try {
+      measurements = validateShipmentPackageMeasurements(body)
+    } catch (error) {
+      return res.status(400).json({ message: error.message })
+    }
+
+    const order = await prisma.order.findFirst({
+      where: storeScope(req, { id: orderId }),
+      select: { id: true, shipment: { select: { id: true } } },
+    })
+    if (!order?.shipment) {
+      return res.status(404).json({ message: 'Shipment not found for this order' })
+    }
+
+    const updated = await prisma.shipment.updateMany({
+      where: {
+        id: order.shipment.id,
+        status: { not: 'PROCESSING' },
+        attemptCount: 0,
+        processingStartedAt: null,
+        processingLeaseToken: null,
+        shiprocketOrderId: null,
+        shiprocketShipmentId: null,
+      },
+      data: {
+        ...measurements,
+        packageConfirmedAt: new Date(),
+        packageConfirmedById: adminId,
+      },
+    })
+    if (updated.count !== 1) {
+      return res.status(409).json({ message: 'Shipment package cannot be changed after processing starts' })
+    }
+
+    const shipment = await prisma.shipment.findUnique({
+      where: { id: order.shipment.id },
+      select: {
+        packageWeightKg: true,
+        packageLengthCm: true,
+        packageBreadthCm: true,
+        packageHeightCm: true,
+        packageConfirmedAt: true,
+        packageConfirmedById: true,
+        packageConfirmedBy: { select: { id: true, name: true } },
+      },
+    })
+    return res.json({ shipment })
+  } catch (error) {
+    return next(error)
+  }
+}
+
+const shipmentOperationStatus = (res, result) => {
+  const outcome = result?.outcome
+  if (['INVALID_SHIPMENT_ID', 'INVALID_COURIER_ID', 'INVALID_MANIFEST_ID', 'INVALID_REQUEST'].includes(outcome)) {
+    return res.status(400).json(result)
+  }
+  if (outcome === 'NOT_FOUND') return res.status(404).json(result)
+  if ([
+    'SHIPROCKET_SHIPMENT_ID_REQUIRED',
+    'AWB_REQUIRED',
+    'PICKUP_REQUIRED',
+    'MANIFEST_NOT_GENERATED',
+    'AWB_ALREADY_ASSIGNED',
+  ].includes(outcome)) {
+    return res.status(409).json(result)
+  }
+  if (['FAILED', 'LEASE_LOST'].includes(outcome)) return res.status(502).json(result)
+  if ([
+    'PROCESSING',
+    'RETRY_SCHEDULED',
+    'RECONCILIATION_REQUIRED',
+    'SHIPROCKET_OUTCOME_UNCERTAIN',
+  ].includes(outcome)) {
+    return res.status(202).json(result)
+  }
+  return res.json(result)
+}
+
+const findScopedShipment = async (req, shipmentId) => {
+  if (!Number.isSafeInteger(shipmentId) || shipmentId < 1) return null
+  return prisma.shipment.findFirst({
+    where: { id: shipmentId, order: storeScope(req) },
+    select: { id: true },
+  })
+}
+
+export const assignAdminShipmentAwb = async (req, res, next) => {
+  try {
+    const shipmentId = Number(req.params.id)
+    if (!await findScopedShipment(req, shipmentId)) {
+      return res.status(Number.isSafeInteger(shipmentId) && shipmentId > 0 ? 404 : 400)
+        .json({ message: 'Shipment not found' })
+    }
+    const body = req.body || {}
+    if (
+      typeof body !== 'object'
+      || Array.isArray(body)
+      || Object.keys(body).some((field) => field !== 'courierId')
+      || (body.courierId !== undefined && (!Number.isSafeInteger(body.courierId) || body.courierId < 1))
+    ) {
+      return res.status(400).json({ message: 'Only a positive integer courierId is accepted' })
+    }
+    return shipmentOperationStatus(res, await shipmentOperations.assignAwb(shipmentId, body.courierId))
+  } catch (error) {
+    return next(error)
+  }
+}
+
+export const generateAdminShipmentLabel = async (req, res, next) => {
+  try {
+    const shipmentId = Number(req.params.id)
+    if (!await findScopedShipment(req, shipmentId)) {
+      return res.status(Number.isSafeInteger(shipmentId) && shipmentId > 0 ? 404 : 400)
+        .json({ message: 'Shipment not found' })
+    }
+    return shipmentOperationStatus(res, await shipmentOperations.generateLabel(shipmentId))
+  } catch (error) {
+    return next(error)
+  }
+}
+
+export const requestAdminShipmentPickup = async (req, res, next) => {
+  try {
+    const shipmentId = Number(req.params.id)
+    if (!await findScopedShipment(req, shipmentId)) {
+      return res.status(Number.isSafeInteger(shipmentId) && shipmentId > 0 ? 404 : 400)
+        .json({ message: 'Shipment not found' })
+    }
+    return shipmentOperationStatus(res, await shipmentOperations.requestPickup(shipmentId))
+  } catch (error) {
+    return next(error)
+  }
+}
+
+export const createAdminShipmentManifest = async (req, res, next) => {
+  try {
+    const body = req.body
+    if (
+      !body
+      || typeof body !== 'object'
+      || Array.isArray(body)
+      || Object.keys(body).length !== 1
+      || !Object.hasOwn(body, 'shipmentIds')
+    ) {
+      return res.status(400).json({ message: 'Only shipmentIds is accepted' })
+    }
+    return shipmentOperationStatus(
+      res,
+      await shipmentOperations.createManifest(body.shipmentIds, req.store.id),
+    )
+  } catch (error) {
+    return next(error)
+  }
+}
+
+export const printAdminShipmentManifest = async (req, res, next) => {
+  try {
+    const manifestId = Number(req.params.id)
+    if (!Number.isSafeInteger(manifestId) || manifestId < 1) {
+      return res.status(400).json({ message: 'Invalid manifest ID' })
+    }
+    const manifest = await prisma.shipmentManifest.findFirst({
+      where: {
+        id: manifestId,
+        items: { some: { shipment: { order: storeScope(req) } } },
+      },
+      select: { id: true },
+    })
+    if (!manifest) return res.status(404).json({ message: 'Manifest not found' })
+    return shipmentOperationStatus(res, await shipmentOperations.printManifest(manifestId))
+  } catch (error) {
+    return next(error)
+  }
+}
+
+export const getAdminShipmentManifestOperations = async (req, res, next) => {
+  try {
+    const manifestId = Number(req.params.id)
+    if (!Number.isSafeInteger(manifestId) || manifestId < 1) {
+      return res.status(400).json({ message: 'Invalid manifest ID' })
+    }
+    const manifest = await prisma.shipmentManifest.findFirst({
+      where: {
+        id: manifestId,
+        items: { some: { shipment: { order: storeScope(req) } } },
+      },
+      select: { id: true },
+    })
+    if (!manifest) return res.status(404).json({ message: 'Manifest not found' })
+    const details = await shipmentOperations.getManifestOperations(manifestId)
+    return res.json({ manifest: details })
+  } catch (error) {
+    return next(error)
+  }
+}
+
+export const getAdminShipmentOperations = createAdminShipmentOperationsHandler({
+  prismaClient: prisma,
+  shipmentOperations,
+  storeScope,
+})
 
 export const getLowStockInventory = async (req, res, next) => {
   try {

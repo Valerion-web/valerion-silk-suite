@@ -18,6 +18,7 @@ import adminRoutes from './routes/adminRoutes.js'
 import customerRoutes from './routes/customerRoutes.js'
 import razorpayRoutes from './routes/razorpayRoutes.js'
 import razorpayWebhookRoutes from './routes/razorpayWebhookRoutes.js'
+import courierEventsRoutes from './routes/courierEventsRoutes.js'
 import { notFound, errorHandler } from './middleware/errorMiddleware.js'
 import csrfMiddleware from './middleware/csrfMiddleware.js'
 
@@ -39,6 +40,7 @@ app.use('/api/payments/razorpay/webhook', razorpayWebhookRoutes)
 app.use(express.json())
 app.use(morgan('dev'))
 app.use('/uploads', express.static('uploads'))
+app.use('/api/integrations/courier-events', courierEventsRoutes)
 app.use('/api', resolveStore)
 app.use('/api', csrfMiddleware)
 app.use('/api/products', productRoutes)

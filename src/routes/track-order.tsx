@@ -1,193 +1,210 @@
-import { useState } from "react";
-import { motion } from "framer-motion";
-import { Package, Search, Truck, CheckCircle2, Sparkles } from "lucide-react";
+import { useState, type FormEvent } from "react";
+import { CheckCircle2, Package, Search, Truck } from "lucide-react";
 import { PageHeader, PageShell } from "@/components/site/PageShell";
+import { apiFetch } from "@/lib/api";
 
-const STAGES = [
-  { icon: Sparkles, label: "Order Confirmed", date: "Mar 14 · 10:24", status: "completed" },
-  { icon: Package, label: "Crafted & Packed", date: "Mar 15 · 16:02", status: "completed" },
-  { icon: Truck, label: "In Transit", date: "Mar 16 · 09:18", status: "completed" },
-  { icon: Truck, label: "Out For Delivery", date: "Mar 17 · 08:15", status: "active" },
-  { icon: CheckCircle2, label: "Delivered", date: "Awaiting", status: "pending" },
-];
+type TrackingEvent = {
+  id: number;
+  status?: string | null;
+  activity?: string | null;
+  location?: string | null;
+  occurredAt?: string | null;
+};
 
-const shippingDetails = {
-  courier: "Valerion Express",
-  trackingNumber: "VLR-2217-8893",
-  method: "Concierge Air Freight",
-  estimatedArrival: "March 18, 2026 · by 8 PM",
-  address: "22 Rue de la Paix, Paris, 75002, France",
+type OrderTracking = {
+  id: number;
+  status?: string | null;
+  createdAt?: string | null;
+  currency?: string | null;
+  shipment?: {
+    awbCode?: string | null;
+    courierName?: string | null;
+    currentStatus?: string | null;
+    currentStatusAt?: string | null;
+    estimatedDeliveryAt?: string | null;
+    events: TrackingEvent[];
+  } | null;
+};
+
+const formatDate = (value?: string | null) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
 };
 
 function TrackOrderPage() {
-  const [orderId, setOrderId] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+  const [orderReference, setOrderReference] = useState("");
+  const [tracking, setTracking] = useState<OrderTracking | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [searched, setSearched] = useState(false);
 
-  const progressIndex = STAGES.findIndex((stage) => stage.status === "active");
-  const progressPercent = Math.round(((progressIndex + 1) / STAGES.length) * 100);
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const orderId = orderReference.trim();
+    if (!/^\d+$/.test(orderId) || Number(orderId) < 1) {
+      setError("Enter the numeric order number from your order confirmation.");
+      setTracking(null);
+      setSearched(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      setSearched(false);
+      const response = await apiFetch(`/api/orders/${encodeURIComponent(orderId)}/tracking`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.message || "Unable to load tracking information.");
+      }
+      setTracking(data as OrderTracking);
+      setSearched(true);
+    } catch (requestError) {
+      setTracking(null);
+      setError(requestError instanceof Error ? requestError.message : "Unable to load tracking information.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <>
       <PageHeader
-        eyebrow="Concierge"
+        eyebrow="Order updates"
         title="Track Your Order"
-        subtitle="Every Valerion piece is hand-finished. Follow its journey from our atelier to your wardrobe."
+        subtitle="View shipment updates shared by the courier for your order."
       />
       <PageShell className="pt-0">
-        <div className="mx-auto max-w-5xl px-6 mt-20">
-          <motion.form
-            onSubmit={(e) => {
-              e.preventDefault();
-              setSubmitted(true);
-            }}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7 }}
-            className="relative overflow-hidden rounded-[36px] border border-border bg-background p-6 shadow-card md:p-8"
+        <div className="mx-auto mt-12 max-w-5xl px-6">
+          <form
+            onSubmit={handleSubmit}
+            className="rounded-[32px] border border-border bg-background p-6 shadow-card md:p-8"
           >
-            <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-gold to-transparent" />
-            <div className="grid gap-4 md:grid-cols-[1.4fr_0.9fr] items-end">
-              <div>
-                <label className="text-[10px] tracking-wider-luxury uppercase text-gold">Order Reference</label>
-                <div className="mt-4 flex items-center gap-3 rounded-[24px] border border-border bg-background px-4 py-3 shadow-card">
-                  <Search className="h-4 w-4 text-muted-foreground" />
-                  <input
-                    value={orderId}
-                    onChange={(e) => setOrderId(e.target.value)}
-                    placeholder="VLR-2026-XXXX"
-                    className="flex-1 bg-transparent outline-none font-serif text-lg text-foreground placeholder:text-muted-foreground/50"
-                  />
-                </div>
+            <label htmlFor="order-reference" className="text-[10px] uppercase tracking-wider-luxury text-gold">
+              Order number
+            </label>
+            <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+              <div className="flex min-w-0 flex-1 items-center gap-3 rounded-[20px] border border-border px-4 py-3">
+                <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <input
+                  id="order-reference"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={orderReference}
+                  onChange={(inputEvent) => setOrderReference(inputEvent.target.value)}
+                  placeholder="Enter your numeric order number"
+                  className="min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground/60"
+                />
               </div>
-              <div className="rounded-[28px] border border-border bg-background p-5 text-right shadow-card">
-                <p className="text-[10px] tracking-wider-luxury uppercase text-gold">Estimated Delivery</p>
-                <p className="mt-3 text-2xl font-serif text-[#111827]">March 18, 2026</p>
-                <p className="mt-2 text-sm text-muted-foreground">Arriving by 8 PM</p>
-              </div>
-            </div>
-            <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <button
                 type="submit"
-                className="rounded-full bg-gold px-8 py-3 text-[10px] tracking-wider-luxury uppercase text-midnight transition-transform duration-300 hover:-translate-y-0.5 hover:bg-[#E3B73B]"
+                disabled={loading}
+                className="rounded-full bg-gold px-8 py-3 text-xs uppercase tracking-wider-luxury text-midnight transition hover:bg-[#E3B73B] disabled:cursor-wait disabled:opacity-60"
               >
-                Track
+                {loading ? "Loading..." : "Track order"}
               </button>
-              <p className="text-sm text-frost/60 font-serif">
-                Enter your order reference to refresh the latest shipment status.
-              </p>
             </div>
-          </motion.form>
+            {error && <p role="alert" className="mt-4 text-sm text-red-600">{error}</p>}
+          </form>
 
-          {submitted && (
-            <motion.div
-              initial={{ opacity: 0, y: 30 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
-              className="mt-16 space-y-8"
-            >
-              <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr] items-start">
-                <div className="rounded-[36px] border border-border bg-background p-8 shadow-card transition-all duration-300 ease-out hover:-translate-y-1">
-                  <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+          {loading && (
+            <div role="status" className="mt-8 rounded-[28px] border border-border bg-background p-8 text-sm text-muted-foreground">
+              Loading your order tracking...
+            </div>
+          )}
+
+          {!loading && searched && tracking && (
+            <section className="mt-8 space-y-6" aria-label="Order tracking details">
+              <div className="rounded-[32px] border border-border bg-background p-6 shadow-card md:p-8">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider-luxury text-gold">Order information</p>
+                    <h2 className="mt-2 font-serif text-2xl text-foreground">Order #{tracking.id}</h2>
+                    {tracking.createdAt && (
+                      <p className="mt-2 text-sm text-muted-foreground">Placed {formatDate(tracking.createdAt) || "date unavailable"}</p>
+                    )}
+                  </div>
+                  <span className="rounded-full border border-border px-4 py-2 text-sm text-foreground">
+                    {tracking.status || "Status unavailable"}
+                  </span>
+                </div>
+              </div>
+
+              {!tracking.shipment ? (
+                <div className="rounded-[32px] border border-border bg-background p-8 shadow-card">
+                  <div className="flex items-start gap-4">
+                    <Package aria-hidden="true" className="mt-1 h-5 w-5 text-gold" />
                     <div>
-                      <p className="text-[10px] tracking-wider-luxury uppercase text-gold">Tracking Progress</p>
-                      <p className="mt-3 text-3xl font-display text-foreground">{progressPercent}% Delivered Journey Completed</p>
-                    </div>
-                    <div className="rounded-[24px] border border-border bg-background px-5 py-4 text-sm text-muted-foreground shadow-card">
-                      <p className="uppercase tracking-[0.35em] text-muted-foreground">Next milestone</p>
-                      <p className="mt-2 font-medium text-foreground">Out For Delivery</p>
+                      <h2 className="font-serif text-xl text-foreground">Shipment updates not available yet</h2>
+                      <p className="mt-2 text-sm text-muted-foreground">Courier tracking will appear here when shipment information is available.</p>
                     </div>
                   </div>
-                  <div className="mt-8 h-4 overflow-hidden rounded-full border border-border bg-muted">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      animate={{ width: `${progressPercent}%` }}
-                      transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1] }}
-                      className="h-full rounded-full shadow-[0_10px_30px_rgba(212,175,55,0.35)]"
-                      style={{ background: "linear-gradient(90deg, #D4AF37, #E5C76B)" }}
+                </div>
+              ) : (
+                <>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <TrackingInfo label="Current shipment status" value={tracking.shipment.currentStatus || "No carrier update"} />
+                    <TrackingInfo label="AWB number" value={tracking.shipment.awbCode || "Not assigned"} />
+                    <TrackingInfo label="Courier" value={tracking.shipment.courierName || "Not available"} />
+                    <TrackingInfo
+                      label="Estimated delivery"
+                      value={formatDate(tracking.shipment.estimatedDeliveryAt) || "Not provided"}
                     />
                   </div>
-                </div>
 
-                <div className="rounded-[36px] border border-border bg-background p-8 shadow-card transition-all duration-300 ease-out hover:-translate-y-1">
-                  <p className="text-[10px] tracking-wider-luxury uppercase text-gold">Delivery Estimate</p>
-                  <p className="mt-4 text-3xl font-serif text-foreground">March 18, 2026</p>
-                  <p className="mt-2 text-sm text-muted-foreground">Arriving by 8 PM</p>
-                  <div className="mt-6 rounded-[24px] border border-border bg-background p-5 shadow-card">
-                    <p className="text-xs uppercase tracking-[0.35em] text-muted-foreground">Address</p>
-                    <p className="mt-2 text-sm text-foreground">{shippingDetails.address}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr]">
-                <div className="rounded-[36px] border border-border bg-background p-8 shadow-card transition-all duration-300 ease-out hover:-translate-y-1">
-                  <p className="text-[10px] tracking-wider-luxury uppercase text-gold">Shipment Timeline</p>
-                  <div className="relative mt-10">
-                    <div className="absolute left-6 top-6 bottom-6 w-px bg-border" />
-                    <div className="absolute left-6 top-6 w-px bg-gradient-to-b from-gold to-transparent" style={{ height: `${(progressIndex + 1) * 20 + 10}%` }} />
-                    <div className="space-y-8">
-                      {STAGES.map((stage, index) => {
-                        const isCompleted = stage.status === "completed";
-                        const isActive = stage.status === "active";
-                        const iconClasses = isCompleted
-                          ? "bg-gold border-gold text-midnight"
-                          : isActive
-                          ? "bg-background border-gold text-gold shadow-glow"
-                          : "bg-muted border-border text-muted-foreground";
-
-                        return (
-                          <motion.div
-                            key={stage.label}
-                            initial={{ opacity: 0, x: -20 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            transition={{ delay: 0.15 + index * 0.12 }}
-                            className="relative flex items-start gap-6 pl-0"
-                          >
-                            <div className={`relative z-10 h-12 w-12 rounded-full grid place-items-center border ${iconClasses}`}>
-                              <stage.icon className="h-5 w-5" />
-                            </div>
-                            <div className="pt-1">
-                              <p className={`font-display text-xl ${isCompleted || isActive ? "text-foreground" : "text-muted-foreground"}`}>
-                                {stage.label}
-                              </p>
-                              <p className={isCompleted || isActive ? "mt-2 text-[10px] uppercase tracking-luxury text-muted-foreground" : "mt-2 text-[10px] uppercase tracking-luxury text-muted-foreground/70"}>
-                                {stage.date}
+                  <div className="rounded-[32px] border border-border bg-background p-6 shadow-card md:p-8">
+                    <div className="flex items-center gap-3">
+                      <Truck aria-hidden="true" className="h-5 w-5 text-gold" />
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider-luxury text-gold">Shipment timeline</p>
+                        <h2 className="mt-1 font-serif text-2xl text-foreground">Carrier events</h2>
+                      </div>
+                    </div>
+                    {tracking.shipment.events.length === 0 ? (
+                      <p className="mt-6 text-sm text-muted-foreground">No carrier tracking updates are available yet.</p>
+                    ) : (
+                      <ol className="mt-8 space-y-6">
+                        {tracking.shipment.events.map((item) => (
+                          <li key={item.id} className="flex gap-4">
+                            <span className="mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-full border border-gold/40 bg-gold/10 text-gold">
+                              <CheckCircle2 aria-hidden="true" className="h-4 w-4" />
+                            </span>
+                            <div className="min-w-0 flex-1 border-b border-border pb-5">
+                              <p className="font-medium text-foreground">{item.status || item.activity || "Shipment update"}</p>
+                              {item.activity && item.activity !== item.status && (
+                                <p className="mt-1 text-sm text-muted-foreground">{item.activity}</p>
+                              )}
+                              {item.location && <p className="mt-1 text-sm text-muted-foreground">{item.location}</p>}
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                {formatDate(item.occurredAt) || "Carrier did not provide an event time"}
                               </p>
                             </div>
-                          </motion.div>
-                        );
-                      })}
-                    </div>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
                   </div>
-                </div>
-
-                <div className="rounded-[36px] border border-border bg-background p-8 shadow-card transition-all duration-300 ease-out hover:-translate-y-1">
-                  <p className="text-[10px] tracking-wider-luxury uppercase text-gold">Shipping Details</p>
-                  <div className="mt-6 space-y-4 text-sm text-muted-foreground">
-                    <div className="rounded-[24px] border border-border bg-background p-5 shadow-card">
-                      <p className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground">Courier Partner</p>
-                      <p className="mt-2 text-base text-foreground">{shippingDetails.courier}</p>
-                    </div>
-                    <div className="rounded-[24px] border border-border bg-background p-5 shadow-card">
-                      <p className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground">Tracking Number</p>
-                      <p className="mt-2 text-base text-foreground">{shippingDetails.trackingNumber}</p>
-                    </div>
-                    <div className="rounded-[24px] border border-border bg-background p-5 shadow-card">
-                      <p className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground">Shipping Method</p>
-                      <p className="mt-2 text-base text-foreground">{shippingDetails.method}</p>
-                    </div>
-                    <div className="rounded-[24px] border border-border bg-background p-5 shadow-card">
-                      <p className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground">Estimated Arrival</p>
-                      <p className="mt-2 text-base text-foreground">{shippingDetails.estimatedArrival}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
+                </>
+              )}
+            </section>
           )}
         </div>
       </PageShell>
     </>
+  );
+}
+
+function TrackingInfo({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[24px] border border-border bg-background p-5 shadow-card">
+      <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">{label}</p>
+      <p className="mt-3 break-words text-base text-foreground">{value}</p>
+    </div>
   );
 }
 

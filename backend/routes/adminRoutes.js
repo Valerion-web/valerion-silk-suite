@@ -44,6 +44,14 @@ import {
   exportAdminReport,
   getAdminInventoryHistory,
   getAdminOrderById,
+  confirmAdminShipmentPackage,
+  assignAdminShipmentAwb,
+  generateAdminShipmentLabel,
+  requestAdminShipmentPickup,
+  createAdminShipmentManifest,
+  printAdminShipmentManifest,
+  getAdminShipmentManifestOperations,
+  getAdminShipmentOperations,
 } from '../controllers/adminController.js'
 
 const router = express.Router()
@@ -80,6 +88,19 @@ router.patch('/reviews/:id/approve', requireCapability('marketing'), requireConc
 router.patch('/reviews/:id/reject', requireCapability('marketing'), requireConcreteStore, updateAdminReview)
 router.route('/reviews/:id').delete(requireCapability('marketing'), requireConcreteStore, deleteAdminReview)
 router.route('/settings').get(requireCapability('users'), getAdminSettings).put(requireSuperAdmin, updateAdminSettings)
+router.put(
+  '/orders/:id/shipment/package-confirmation',
+  requireCapability('orders'),
+  requireConcreteStore,
+  confirmAdminShipmentPackage,
+)
+router.get('/shipments/:id/operations', requireCapability('orders'), requireConcreteStore, getAdminShipmentOperations)
+router.post('/shipments/:id/awb', requireCapability('orders'), requireConcreteStore, assignAdminShipmentAwb)
+router.post('/shipments/:id/label', requireCapability('orders'), requireConcreteStore, generateAdminShipmentLabel)
+router.post('/shipments/:id/pickup', requireCapability('orders'), requireConcreteStore, requestAdminShipmentPickup)
+router.post('/manifests', requireCapability('orders'), requireConcreteStore, createAdminShipmentManifest)
+router.get('/manifests/:id/operations', requireCapability('orders'), requireConcreteStore, getAdminShipmentManifestOperations)
+router.post('/manifests/:id/print', requireCapability('orders'), requireConcreteStore, printAdminShipmentManifest)
 router.get('/orders/:id', requireCapability('orders'), getAdminOrderById)
 
 export default router

@@ -61,6 +61,7 @@ model User {
   couponUsages   CouponUsage[]
   adminAssignments AdminAssignment[]
   authIdentities AuthIdentity[]
+  confirmedShipments   Shipment[]           @relation("ShipmentPackageConfirmedBy")
 
   @@index([storeId])
 }
@@ -275,11 +276,175 @@ model Order {
   statusHistory            OrderStatusHistory[]
   couponUsages             CouponUsage[]
   payments                 Payment[]
+  shipment                  Shipment?
 
   @@index([userId])
   @@index([storeId])
   @@index([storeId, userId])
   @@unique([userId, storeId, idempotencyKey])
+}
+
+model Shipment {
+  id                      Int                     @id @default(autoincrement())
+  order                   Order                   @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  orderId                 Int                     @unique
+  status                  String                  @default("PENDING")
+  attemptCount            Int                     @default(0)
+  shiprocketOrderId       String?
+  shiprocketShipmentId    String?
+  awbCode                 String?
+  awbNormalized           String?
+  courierName             String?
+  courierCompanyId        String?
+  trackingUrl             String?
+  labelUrl                String?
+  labelGeneratedAt        DateTime?               @db.Timestamp(3)
+  pickupRequestedAt       DateTime?               @db.Timestamp(3)
+  pickupEstimatedAt       DateTime?               @db.Timestamp(3)
+  pickupProviderReference String?
+  trackingStatus          String?
+  trackingStatusId        String?
+  trackingStatusAt        DateTime?               @db.Timestamp(3)
+  estimatedDeliveryAt     DateTime?               @db.Timestamp(3)
+  lastAttemptAt           DateTime?               @db.Timestamp(3)
+  nextAttemptAt           DateTime                @default(now()) @db.Timestamp(3)
+  processingStartedAt     DateTime?               @db.Timestamp(3)
+  processingLeaseToken    String?                 @unique
+  lastError               String?
+  packageWeightKg         Decimal?                @db.Decimal(8, 3)
+  packageLengthCm         Decimal?                @db.Decimal(8, 2)
+  packageBreadthCm        Decimal?                @db.Decimal(8, 2)
+  packageHeightCm         Decimal?                @db.Decimal(8, 2)
+  packageConfirmedAt      DateTime?               @db.Timestamp(3)
+  packageConfirmedBy      User?                   @relation("ShipmentPackageConfirmedBy", fields: [packageConfirmedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  packageConfirmedById    Int?
+  operations              ShipmentOperation[]
+  manifestItems           ShipmentManifestItem[]
+  trackingEvents          ShipmentTrackingEvent[]
+  createdAt               DateTime                @default(now()) @db.Timestamp(3)
+  updatedAt               DateTime                @updatedAt @db.Timestamp(3)
+
+  @@index([status, nextAttemptAt])
+  @@index([processingStartedAt])
+  @@index([packageConfirmedById])
+  @@index([awbNormalized])
+}
+
+model ShipmentTrackingEvent {
+  id               Int       @id @default(autoincrement())
+  shipment         Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  shipmentId       Int
+  eventHash        String    @unique
+  awbNormalized    String
+  source           String
+  status           String?
+  statusId         String?
+  shipmentStatus   String?
+  shipmentStatusId String?
+  activity         String?
+  location         String?
+  srStatus         String?
+  srStatusLabel    String?
+  providerOrderId  String?
+  merchantOrderId  String?
+  occurredAt       DateTime? @db.Timestamp(3)
+  createdAt        DateTime  @default(now()) @db.Timestamp(3)
+
+  @@index([shipmentId, occurredAt])
+  @@index([awbNormalized])
+}
+
+model ShipmentOperation {
+  id                     Int                     @id @default(autoincrement())
+  identityKey            String                  @unique
+  shipment               Shipment?               @relation(fields: [shipmentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  shipmentId             Int?
+  manifest               ShipmentManifest?       @relation(fields: [manifestId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  manifestId             Int?
+  operationType          ShipmentOperationType
+  status                 ShipmentOperationStatus @default(PENDING)
+  requestSubmissionStage String                  @default("NOT_SUBMITTED")
+  attemptCount           Int                     @default(0)
+  nextAttemptAt          DateTime                @default(now()) @db.Timestamp(3)
+  processingStartedAt    DateTime?               @db.Timestamp(3)
+  processingLeaseToken   String?                 @unique
+  providerReference      String?
+  lastErrorCode          String?
+  lastErrorMessage       String?
+  createdAt              DateTime                @default(now()) @db.Timestamp(3)
+  updatedAt              DateTime                @updatedAt @db.Timestamp(3)
+
+  @@unique([shipmentId, operationType])
+  @@unique([manifestId, operationType])
+  @@index([status, nextAttemptAt])
+  @@index([shipmentId])
+  @@index([manifestId])
+}
+
+model ShipmentManifest {
+  id                     Int                    @id @default(autoincrement())
+  requestKey             String                 @unique
+  status                 ShipmentManifestStatus @default(PENDING)
+  shiprocketManifestId   String?
+  manifestUrl            String?
+  generatedAt            DateTime?              @db.Timestamp(3)
+  printUrl               String?
+  printedAt              DateTime?              @db.Timestamp(3)
+  providerResponse       Json?
+  lastErrorCode          String?
+  lastErrorMessage       String?
+  requestSubmissionStage String                 @default("NOT_SUBMITTED")
+  attemptCount           Int                    @default(0)
+  nextAttemptAt          DateTime               @default(now()) @db.Timestamp(3)
+  processingStartedAt    DateTime?              @db.Timestamp(3)
+  processingLeaseToken   String?                @unique
+  items                  ShipmentManifestItem[]
+  operations             ShipmentOperation[]
+  createdAt              DateTime               @default(now()) @db.Timestamp(3)
+  updatedAt              DateTime               @updatedAt @db.Timestamp(3)
+
+  @@index([status, nextAttemptAt])
+}
+
+model ShipmentManifestItem {
+  id                   Int              @id @default(autoincrement())
+  manifest             ShipmentManifest @relation(fields: [manifestId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  manifestId           Int
+  shipment             Shipment         @relation(fields: [shipmentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  shipmentId           Int
+  shiprocketOrderId    String
+  shiprocketShipmentId String
+  createdAt            DateTime         @default(now()) @db.Timestamp(3)
+
+  @@unique([manifestId, shipmentId])
+  @@index([manifestId])
+  @@index([shipmentId])
+}
+
+enum ShipmentOperationType {
+  ASSIGN_AWB
+  GENERATE_LABEL
+  REQUEST_PICKUP
+  GENERATE_MANIFEST
+  PRINT_MANIFEST
+}
+
+enum ShipmentOperationStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  RETRY_SCHEDULED
+  RECONCILIATION_REQUIRED
+}
+
+enum ShipmentManifestStatus {
+  PENDING
+  PROCESSING
+  GENERATED
+  FAILED
+  RETRY_SCHEDULED
+  RECONCILIATION_REQUIRED
 }
 
 enum PaymentProvider {

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import prisma from '../lib/prisma.js'
+import { createOrderTrackingHandler } from '../services/customerOrderTracking.js'
 
 const productInclude = {
   category: true,
@@ -668,15 +669,4 @@ export const getOrder = async (req, res, next) => {
   }
 }
 
-export const getOrderTracking = async (req, res, next) => {
-  try {
-    const order = await prisma.order.findFirst({ where: { id: Number(req.params.id), userId: req.user.id, storeId: req.store.id }, select: { id: true, status: true, statusHistory: { orderBy: { createdAt: 'asc' } } } })
-    if (!order) {
-      res.status(404)
-      throw new Error('Order not found')
-    }
-    res.json(order)
-  } catch (error) {
-    next(error)
-  }
-}
+export const getOrderTracking = createOrderTrackingHandler({ prismaClient: prisma })
