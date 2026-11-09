@@ -6,6 +6,6 @@ CHECK (
         "providerOrderId" IS NULL
         AND "providerPaymentId" IS NULL
         AND "providerSignature" IS NULL
-        AND "status" = 'PENDING_COLLECTION'
+        AND "status" NOT IN ('AUTHORIZED', 'CAPTURED')
     )
 );
