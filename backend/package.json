@@ -26,8 +26,9 @@
     "express-rate-limit": "^8.7.0",
     "google-auth-library": "^10.5.0",
     "jsonwebtoken": "^9.0.2",
-    "morgan": "^1.10.0",
-    "multer": "^2.4.0",
+    "libphonenumber-js": "^1.13.15",
+    "morgan": "^1.12.1",
+    "multer": "^2.5.0",
     "pg": "^8.21.0",
     "razorpay": "^2.9.8",
     "read-excel-file": "9.3.10",
@@ -36,5 +37,18 @@
   "devDependencies": {
     "nodemon": "^3.0.1",
     "prisma": "^7.8.0"
+  },
+  "overrides": {
+    "express": {
+      "body-parser": "1.20.9",
+      "proxy-addr": "2.0.8",
+      "qs": "6.16.1"
+    },
+    "express-rate-limit": {
+      "ip-address": "10.7.4"
+    },
+    "axios": {
+      "follow-redirects": "1.16.2"
+    }
   }
 }

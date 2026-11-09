@@ -35,7 +35,7 @@ const createToken = (user) => {
 
 const sanitizeUser = (user) => ({
   id: user.id,
-  email: user.email,
+  email: user.email ?? null,
   name: user.name || '',
   role: user.role,
   createdAt: user.createdAt,
@@ -52,6 +52,12 @@ const setAuthCookie = (res, token) => {
     sameSite: isProduction ? 'none' : 'lax',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   })
+}
+
+export const issueAuthSession = (user, res) => {
+  const token = createToken(user)
+  setAuthCookie(res, token)
+  return sanitizeUser(user)
 }
 
 const googleNonceCookieOptions = () => {
@@ -211,7 +217,7 @@ export const createLoginUserHandler = ({ prismaClient = prisma } = {}) => async 
     }
 
     if (!user.password) {
-      res.status(500)
+      res.status(401)
       throw new Error('Authentication failed')
     }
 

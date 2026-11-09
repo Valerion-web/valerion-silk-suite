@@ -78,7 +78,13 @@ export function ProfileMenu({ onDark }: { onDark: boolean }) {
   );
 }
 
-function SignedIn({ user, onClose, onSignOut }: { user: { name: string; email: string; phone?: string; avatar?: string; address?: string }; onClose: () => void; onSignOut: () => void }) {
+function SignedIn({ user, onClose, onSignOut }: { user: { name: string; email: string | null; phone?: string; avatar?: string; address?: string }; onClose: () => void; onSignOut: () => void }) {
+  const { requestPhoneOtp, linkPhone } = useAuth();
+  const [linkingPhone, setLinkingPhone] = useState(false);
+  const [phone, setPhone] = useState("");
+  const [otp, setOtp] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [linkLoading, setLinkLoading] = useState(false);
   const initials = user.name.split(" ").map((s) => s[0]).join("").slice(0, 2).toUpperCase();
   const items: { to: string; label: string; icon: typeof Package; internal?: boolean }[] = [
     { to: "/account/orders", label: "My Orders", icon: Package },
@@ -89,6 +95,34 @@ function SignedIn({ user, onClose, onSignOut }: { user: { name: string; email: s
     { to: "/account/settings", label: "Account Settings", icon: Settings },
   ];
 
+  const sendPhoneCode = async () => {
+    setLinkLoading(true);
+    try {
+      await requestPhoneOtp(phone, "link");
+      setOtp("");
+      setOtpSent(true);
+    } catch {
+      return;
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
+  const verifyPhoneCode = async () => {
+    setLinkLoading(true);
+    try {
+      await linkPhone(phone, otp);
+      setLinkingPhone(false);
+      setPhone("");
+      setOtp("");
+      setOtpSent(false);
+    } catch {
+      return;
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
   return (
     <div className="text-frost">
       <div className="flex items-start gap-3 px-5 pt-6 pb-5 border-b border-gold/15">
@@ -98,12 +132,61 @@ function SignedIn({ user, onClose, onSignOut }: { user: { name: string; email: s
         <div className="min-w-0 flex-1">
           <div className="font-display text-lg leading-tight truncate">{user.name}</div>
           <div className="mt-1 flex items-center gap-1.5 text-[11px] text-frost/60 truncate">
-            <Mail className="h-3 w-3 text-gold/70 shrink-0" /> <span className="truncate">{user.email}</span>
+            <Mail className="h-3 w-3 text-gold/70 shrink-0" /> <span className="truncate">{user.email ?? "Phone-only account"}</span>
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-frost/60">
             <Phone className="h-3 w-3 text-gold/70 shrink-0" /> {user.phone || <span className="italic text-frost/40">Add phone</span>}
           </div>
         </div>
+      </div>
+
+      <div className="border-t border-gold/15 px-5 py-3">
+        {linkingPhone ? (
+          <div className="space-y-2">
+            <input
+              type="tel"
+              value={phone}
+              onChange={(event) => { setPhone(event.target.value); setOtp(""); setOtpSent(false); }}
+              placeholder="Indian phone number"
+              className="w-full bg-transparent border border-gold/20 px-3 py-2 text-sm text-frost placeholder:text-frost/40 outline-none focus:border-gold"
+            />
+            {otpSent && (
+              <input
+                type="text"
+                value={otp}
+                onChange={(event) => setOtp(event.target.value)}
+                placeholder="Verification code"
+                className="w-full bg-transparent border border-gold/20 px-3 py-2 text-sm text-frost placeholder:text-frost/40 outline-none focus:border-gold"
+              />
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={linkLoading}
+                onClick={otpSent ? verifyPhoneCode : sendPhoneCode}
+                className="flex-1 border border-gold/40 py-2 text-[10px] tracking-wider uppercase text-gold disabled:opacity-60"
+              >
+                {linkLoading ? "Please wait..." : otpSent ? "Verify phone" : "Send code"}
+              </button>
+              <button
+                type="button"
+                disabled={linkLoading}
+                onClick={() => { setLinkingPhone(false); setOtpSent(false); setPhone(""); setOtp(""); }}
+                className="border border-frost/20 px-3 py-2 text-[10px] tracking-wider uppercase text-frost/60"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setLinkingPhone(true)}
+            className="w-full flex items-center justify-center gap-2 py-2 text-[10px] tracking-[0.18em] uppercase text-gold/80 hover:text-gold"
+          >
+            <Phone className="h-3.5 w-3.5" /> Link phone with OTP
+          </button>
+        )}
       </div>
 
       <nav className="py-2">
@@ -164,16 +247,41 @@ function SignedOut({ onSignIn, onSignUp }: { onSignIn: () => void; onSignUp: () 
 }
 
 function AuthModal({ open, onClose, mode, setMode }: { open: boolean; onClose: () => void; mode: "signin" | "signup"; setMode: (m: "signin" | "signup") => void }) {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, requestPhoneOtp, signInWithPhone, signUpWithPhone } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
+  const [phone, setPhone] = useState("");
+  const [otp, setOtp] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [authMethod, setAuthMethod] = useState<"email" | "phone">("email");
   const [loading, setLoading] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
+      if (authMethod === "phone") {
+        if (!otpSent) {
+          await requestPhoneOtp(phone, mode === "signin" ? "login" : "register");
+          setOtpSent(true);
+          return;
+        }
+        if (mode === "signin") {
+          await signInWithPhone(phone, otp);
+        } else {
+          await signUpWithPhone({ name: name.trim(), email: email.trim().toLowerCase(), password: pass, phone, otp });
+        }
+        setPhone("");
+        setOtp("");
+        setOtpSent(false);
+        setName("");
+        setEmail("");
+        setPass("");
+        onClose();
+        return;
+      }
+
       // Trim whitespace and normalize email (lowercase)
       const trimmedEmail = email.trim().toLowerCase();
       const trimmedPass = pass.trim();
@@ -190,6 +298,18 @@ function AuthModal({ open, onClose, mode, setMode }: { open: boolean; onClose: (
       onClose();
     } catch (error) {
       // error toast is handled inside auth provider
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resendPhoneCode = async () => {
+    setLoading(true);
+    try {
+      await requestPhoneOtp(phone, mode === "signin" ? "login" : "register");
+      setOtp("");
+    } catch {
+      return;
     } finally {
       setLoading(false);
     }
@@ -233,24 +353,65 @@ function AuthModal({ open, onClose, mode, setMode }: { open: boolean; onClose: (
               </div>
 
               <form onSubmit={submit} className="space-y-4">
-                {mode === "signup" && (
+                {authMethod === "phone" && mode === "signup" && (
                   <Field icon={UserIcon} type="text" placeholder="Full Name" value={name} onChange={setName} required />
                 )}
-                <Field icon={Mail} type="email" placeholder="Email Address" value={email} onChange={setEmail} required />
-                <Field icon={Lock} type="password" placeholder="Password" value={pass} onChange={setPass} required />
+                {authMethod === "email" && mode === "signup" && (
+                  <Field icon={UserIcon} type="text" placeholder="Full Name" value={name} onChange={setName} required />
+                )}
+                {authMethod === "email" && (
+                  <>
+                    <Field icon={Mail} type="email" placeholder="Email Address" value={email} onChange={setEmail} required />
+                    <Field icon={Lock} type="password" placeholder="Password" value={pass} onChange={setPass} required />
+                  </>
+                )}
+                {authMethod === "phone" && (
+                  <>
+                    <Field icon={Phone} type="tel" placeholder="Indian phone number" value={phone} onChange={(value) => { setPhone(value); setOtp(""); setOtpSent(false); }} required />
+                    {otpSent && <Field icon={Lock} type="text" placeholder="Verification code" value={otp} onChange={setOtp} required />}
+                  </>
+                )}
+                {authMethod === "phone" && mode === "signup" && (
+                  <>
+                    <Field icon={Mail} type="email" placeholder="Email Address" value={email} onChange={setEmail} required />
+                    <Field icon={Lock} type="password" placeholder="Password (at least 8 characters)" value={pass} onChange={setPass} minLength={8} required />
+                  </>
+                )}
 
                 <button
                   type="submit"
                   disabled={loading}
                   className="w-full bg-gradient-gold text-midnight py-3 text-[11px] tracking-[0.24em] uppercase font-medium hover:shadow-[0_0_28px_rgba(212,175,55,0.55)] transition-all mt-2 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {loading ? (mode === "signin" ? "Signing in..." : "Creating account...") : (mode === "signin" ? "Sign In" : "Create Account")}
+                  {loading
+                    ? (otpSent && authMethod === "phone" ? "Verifying..." : mode === "signin" ? "Signing in..." : "Creating account...")
+                    : authMethod === "phone"
+                      ? otpSent ? mode === "signin" ? "Verify & Sign In" : "Verify & Create Account" : "Send Verification Code"
+                      : mode === "signin" ? "Sign In" : "Create Account"}
                 </button>
               </form>
 
+              {authMethod === "phone" && otpSent && (
+                <div className="mt-3 text-center">
+                  <button type="button" disabled={loading} onClick={resendPhoneCode} className="text-[10px] text-frost/60 hover:text-gold disabled:opacity-60">
+                    Resend verification code
+                  </button>
+                </div>
+              )}
+
+              <div className="mt-4 text-center">
+                <button
+                  type="button"
+                  onClick={() => { setAuthMethod(authMethod === "email" ? "phone" : "email"); setOtp(""); setOtpSent(false); }}
+                  className="text-gold hover:underline tracking-wider uppercase text-[10px]"
+                >
+                  {authMethod === "email" ? "Use phone OTP" : "Use email and password"}
+                </button>
+              </div>
+
               <div className="mt-6 text-center text-[11px] text-frost/60">
                 {mode === "signin" ? "New to Valerion?" : "Already a member?"}{" "}
-                <button onClick={() => setMode(mode === "signin" ? "signup" : "signin")} className="text-gold hover:underline tracking-wider uppercase text-[10px] ml-1">
+                <button onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setOtp(""); setOtpSent(false); }} className="text-gold hover:underline tracking-wider uppercase text-[10px] ml-1">
                   {mode === "signin" ? "Create Account" : "Sign In"}
                 </button>
               </div>
@@ -262,7 +423,7 @@ function AuthModal({ open, onClose, mode, setMode }: { open: boolean; onClose: (
   );
 }
 
-function Field({ icon: Icon, type, placeholder, value, onChange, required }: { icon: typeof Mail; type: string; placeholder: string; value: string; onChange: (v: string) => void; required?: boolean }) {
+function Field({ icon: Icon, type, placeholder, value, onChange, required, minLength }: { icon: typeof Mail; type: string; placeholder: string; value: string; onChange: (v: string) => void; required?: boolean; minLength?: number }) {
   return (
     <div className="relative group">
       <Icon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gold/50 group-focus-within:text-gold transition-colors" />
@@ -272,6 +433,7 @@ function Field({ icon: Icon, type, placeholder, value, onChange, required }: { i
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         required={required}
+        minLength={minLength}
         className="w-full bg-transparent border border-gold/20 pl-10 pr-4 py-3 text-sm text-frost placeholder:text-frost/40 outline-none focus:border-gold transition-colors"
       />
     </div>

@@ -350,7 +350,9 @@ async function main() {
       console.log(`  ✓ Admin user created: ${adminEmail}`)
       console.log('  ✓ Password:', adminPassword)
     } else {
-      const passwordMatches = await bcrypt.compare(adminPassword, existingAdmin.password)
+      const passwordMatches = existingAdmin.password
+        ? await bcrypt.compare(adminPassword, existingAdmin.password)
+        : false
       if (!passwordMatches) {
         console.log(`\n🛡️ Admin user exists but password is out of sync, updating password for: ${adminEmail}`)
         await prisma.user.update({
