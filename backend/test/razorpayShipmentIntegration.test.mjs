@@ -24,12 +24,27 @@ let finalizedOrderCreated = true
 let signatureVerificationCalls = 0
 let queueFailuresRemaining = 0
 
+const matchesPaymentWhere = (payment, where = {}) => {
+  if (!payment) return false
+  for (const field of ['id', 'userId', 'storeId', 'provider', 'idempotencyKey', 'orderId']) {
+    if (where[field] !== undefined && payment[field] !== where[field]) return false
+  }
+  if (where.status !== undefined) {
+    const matchesStatus = Array.isArray(where.status.in)
+      ? where.status.in.includes(payment.status)
+      : payment.status === where.status
+    if (!matchesStatus) return false
+  }
+  return true
+}
+
+const findPayment = (where) => (
+  [activeState.codPayment, activeState.payment].find((payment) => matchesPaymentWhere(payment, where)) ?? null
+)
+
 const prismaFacade = {
   payment: {
-    findFirst: async ({ where } = {}) => {
-      const payment = activeState.payment
-      return payment && ['id', 'userId', 'storeId'].every((field) => where?.[field] === undefined || payment[field] === where[field]) ? payment : null
-    },
+    findFirst: async ({ where } = {}) => structuredClone(findPayment(where)),
     updateMany: async ({ data }) => {
       Object.assign(activeState.payment, data)
       return { count: 1 }
@@ -40,10 +55,7 @@ const prismaFacade = {
     activeState.transactionCalls += 1
     const tx = {
       payment: {
-        findFirst: async ({ where } = {}) => {
-          const payment = activeState.payment
-          return payment && ['id', 'userId', 'storeId'].every((field) => where?.[field] === undefined || payment[field] === where[field]) ? payment : null
-        },
+        findFirst: async ({ where } = {}) => findPayment(where),
         updateMany: async ({ data }) => {
           Object.assign(activeState.payment, data)
           return { count: 1 }
@@ -154,6 +166,7 @@ const makeRazorpayOrderRequest = () => ({
 const prepare = ({ failQueue = false, queueFailures = 0 } = {}) => {
   activeState = {
     payment: initialPayment(),
+    codPayment: null,
     ordersFinalized: 0,
     shipments: [],
     shipmentQueueCalls: [],
@@ -165,6 +178,53 @@ const prepare = ({ failQueue = false, queueFailures = 0 } = {}) => {
   finalizedOrderCreated = true
   signatureVerificationCalls = 0
 }
+
+test('does not create a Razorpay payment attempt for a COD-reserved checkout key', async () => {
+  prepare()
+  activeState.codPayment = {
+    id: 34,
+    userId: 11,
+    storeId: 22,
+    provider: 'COD',
+    status: 'PENDING_COLLECTION',
+    idempotencyKey: 'checkout-test-key',
+  }
+  const response = makeResponse()
+  let nextError = null
+
+  await createRazorpayOrder(makeRazorpayOrderRequest(), response, (error) => { nextError = error })
+
+  assert.equal(nextError?.statusCode, 409)
+  assert.match(nextError.message, /reserved for cash on delivery/)
+  assert.equal(activeState.transactionCalls, 1)
+  assert.equal(activeState.shipments.length, 0)
+  assert.equal(activeState.ordersFinalized, 0)
+})
+
+test('payment lookup mock enforces COD user and store filters', async (t) => {
+  for (const field of ['userId', 'storeId']) {
+    await t.test(`mismatched ${field}`, async () => {
+      prepare()
+      activeState.codPayment = {
+        id: 34,
+        userId: 11,
+        storeId: 22,
+        provider: 'COD',
+        status: 'PENDING_COLLECTION',
+        idempotencyKey: 'checkout-test-key',
+      }
+      const where = {
+        id: 34,
+        userId: 11,
+        storeId: 22,
+        idempotencyKey: 'checkout-test-key',
+        provider: 'COD',
+      }
+      assert.equal(findPayment(where), activeState.codPayment)
+      assert.equal(findPayment({ ...where, [field]: 99 }), null)
+    })
+  }
+})
 
 test('queues one shipment after successful Razorpay order finalization', async () => {
   prepare()

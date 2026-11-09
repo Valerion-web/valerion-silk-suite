@@ -42,6 +42,26 @@ const validOrder = () => ({
   }],
 })
 
+const validCodOrder = () => {
+  const order = validOrder()
+  order.payments = [{
+    id: 13,
+    orderId: order.id,
+    userId: order.userId,
+    storeId: order.storeId,
+    provider: 'COD',
+    status: 'PENDING_COLLECTION',
+    amount: order.totalPrice,
+    currency: order.currency,
+    idempotencyKey: order.idempotencyKey,
+    paymentAttemptKey: `cod_${order.idempotencyKey}`,
+    providerOrderId: null,
+    providerPaymentId: null,
+    providerSignature: null,
+  }]
+  return order
+}
+
 const validShipment = () => ({
   id: 5,
   orderId: 99,
@@ -217,6 +237,111 @@ test('supports a single CAPTURED Razorpay payment as verified prepaid eligibilit
   assert.equal(harness.providerCalls.length, 1)
 })
 
+test('creates a COD Shiprocket order with the outstanding collection amount and leaves it unpaid', async () => {
+  const order = validOrder()
+  order.payments = [{
+    id: 13,
+    orderId: order.id,
+    userId: order.userId,
+    storeId: order.storeId,
+    provider: 'COD',
+    status: 'PENDING_COLLECTION',
+    amount: order.totalPrice,
+    currency: order.currency,
+    idempotencyKey: order.idempotencyKey,
+    paymentAttemptKey: `cod_${order.idempotencyKey}`,
+    providerOrderId: null,
+    providerPaymentId: null,
+  }]
+  const harness = makeHarness({ order })
+
+  const result = await harness.processor.processShipment(5)
+
+  assert.equal(result.outcome, 'CREATED')
+  assert.equal(harness.providerCalls.length, 1)
+  assert.equal(harness.providerCalls[0].payment_method, 'COD')
+  assert.equal(harness.providerCalls[0].cod_amount, 23)
+  assert.equal(harness.providerCalls[0].sub_total, 22.5)
+  assert.equal(harness.state.order.payments[0].status, 'PENDING_COLLECTION')
+  assert.equal(harness.state.order.payments[0].providerPaymentId, null)
+})
+
+test('accepts a COD total of ₹49,999.99 but rejects ₹50,000', async (t) => {
+  for (const [amount, expectedOutcome] of [
+    [49_999.99, 'CREATED'],
+    [50_000, 'FAILED'],
+  ]) {
+    await t.test(String(amount), async () => {
+      const order = validOrder()
+      order.totalPrice = amount
+      order.subtotalBeforeDiscount = amount
+      order.discountAmount = 0
+      order.shippingCost = 0
+      order.items = [{
+        quantity: 1,
+        price: amount,
+        product: { name: 'Test Product', sku: 'TEST-1' },
+        variant: null,
+      }]
+      order.payments[0] = {
+        ...order.payments[0],
+        provider: 'COD',
+        status: 'PENDING_COLLECTION',
+        amount,
+        paymentAttemptKey: 'cod_test_key',
+        providerOrderId: null,
+        providerPaymentId: null,
+        providerSignature: null,
+      }
+      const harness = makeHarness({ order })
+
+      const result = await harness.processor.processShipment(5)
+
+      assert.equal(result.outcome, expectedOutcome)
+      assert.equal(harness.providerCalls.length, expectedOutcome === 'CREATED' ? 1 : 0)
+      if (expectedOutcome === 'CREATED') assert.equal(harness.providerCalls[0].cod_amount, amount)
+    })
+  }
+})
+
+test('rejects invalid COD amount, state, and provider identifiers before submission', async (t) => {
+  for (const [name, update] of [
+    ['missing amount', (payment) => { payment.amount = null }],
+    ['negative amount', (payment) => { payment.amount = -1 }],
+    ['amount above the COD cap', (payment, order) => {
+      payment.amount = 50_000
+      order.totalPrice = 50_000
+    }],
+    ['amount inconsistent with the order', (payment) => { payment.amount = 22 }],
+    ['wrong currency', (payment) => { payment.currency = 'USD' }],
+    ['wrong state', (payment) => { payment.status = 'CAPTURED' }],
+    ['Razorpay identifiers on a COD payment', (payment) => { payment.providerPaymentId = 'pay_test' }],
+  ]) {
+    await t.test(name, async () => {
+      const order = validOrder()
+      const payment = {
+        ...order.payments[0],
+        provider: 'COD',
+        status: 'PENDING_COLLECTION',
+        amount: order.totalPrice,
+        paymentAttemptKey: 'cod_test_key',
+        providerOrderId: null,
+        providerPaymentId: null,
+        providerSignature: null,
+      }
+      update(payment, order)
+      order.payments = [payment]
+      const harness = makeHarness({ order })
+
+      const result = await harness.processor.processShipment(5)
+
+      assert.equal(result.outcome, 'FAILED')
+      assert.equal(harness.providerCalls.length, 0)
+      assert.equal(harness.state.shipment.status, 'FAILED')
+    })
+  }
+})
+
 test('rejects missing payment and payments without an accepted verified status', async (t) => {
   for (const [name, payments] of [
     ['missing payment', []],
@@ -318,6 +443,18 @@ test('unconfirmed or incomplete package data cannot be processed', async (t) => 
   }
 })
 
+test('COD orders remain gated on administrator package confirmation', async () => {
+  const shipment = validShipment()
+  shipment.packageConfirmedAt = null
+  const harness = makeHarness({ order: validCodOrder(), shipment })
+
+  const result = await harness.processor.processShipment(5)
+
+  assert.equal(result.outcome, 'INELIGIBLE')
+  assert.equal(harness.providerCalls.length, 0)
+  assert.equal(harness.state.order.payments[0].status, 'PENDING_COLLECTION')
+})
+
 test('builds a rupee payload from stored rupee amounts at paise precision', async () => {
   const harness = makeHarness()
 
@@ -332,6 +469,7 @@ test('builds a rupee payload from stored rupee amounts at paise precision', asyn
   assert.equal(payload.total_discount, 2.5)
   assert.equal(payload.shipping_charges, 0.5)
   assert.equal(payload.payment_method, 'Prepaid')
+  assert.equal(Object.hasOwn(payload, 'cod_amount'), false)
   assert.equal(payload.sub_total + payload.shipping_charges, 23)
   assert.equal(payload.sub_total + payload.total_discount, 25)
   assert.equal(
@@ -413,6 +551,36 @@ test('uncertain provider outcomes require reconciliation instead of automatic re
   assert.equal(harness.state.shipment.status, 'RECONCILIATION_REQUIRED')
   assert.equal(harness.state.shipment.nextAttemptAt.getTime(), validShipment().nextAttemptAt.getTime())
   assert.equal(harness.state.shipment.processingLeaseToken, null)
+})
+
+test('COD provider retries keep payment pending and uncertain submissions require reconciliation', async (t) => {
+  await t.test('rate limits can retry the same unpaid COD obligation', async () => {
+    const shipment = validShipment()
+    shipment.attemptCount = 1
+    const providerError = Object.assign(new Error('rate limited'), {
+      code: 'SHIPROCKET_REQUEST_FAILED',
+      statusCode: 429,
+    })
+    const harness = makeHarness({ order: validCodOrder(), shipment, providerError })
+    const result = await harness.processor.processShipment(5)
+
+    assert.equal(result.outcome, 'RETRY_SCHEDULED')
+    assert.equal(harness.providerCalls[0].payment_method, 'COD')
+    assert.equal(harness.state.order.payments[0].status, 'PENDING_COLLECTION')
+    assert.equal(harness.state.order.payments[0].providerPaymentId, null)
+  })
+
+  await t.test('uncertain submissions are not automatically retried', async () => {
+    const providerError = Object.assign(new Error('connection lost'), {
+      code: 'SHIPROCKET_REQUEST_UNAVAILABLE',
+    })
+    const harness = makeHarness({ order: validCodOrder(), providerError })
+    const result = await harness.processor.processShipment(5)
+
+    assert.equal(result.outcome, 'RECONCILIATION_REQUIRED')
+    assert.equal(harness.state.shipment.status, 'RECONCILIATION_REQUIRED')
+    assert.equal(harness.state.order.payments[0].status, 'PENDING_COLLECTION')
+  })
 })
 
 test('existing provider identifiers are preserved and do not trigger another submission', async () => {

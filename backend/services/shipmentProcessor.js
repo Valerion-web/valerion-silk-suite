@@ -5,6 +5,7 @@ import { validateShipmentPackageMeasurements } from './shipmentPackageMeasuremen
 const CLAIMABLE_STATUSES = ['PENDING', 'RETRY_SCHEDULED']
 const RETRY_DELAY_BASE_MS = 60_000
 const RETRY_DELAY_MAX_MS = 24 * 60 * 60 * 1000
+const COD_MAX_TOTAL_CENTS = 5_000_000
 const PERSISTENCE_FAILURE_CODE = 'SHIPMENT_SUCCESS_PERSISTENCE_FAILED'
 const MAX_CENTS_REPRESENTATION_ERROR = 1e-7
 
@@ -145,6 +146,31 @@ const readPackageConfig = (env, shipment) => {
 
 const paymentForOrder = (order) => {
   const paymentRecords = Array.isArray(order.payments) ? order.payments : []
+  if (paymentRecords.length === 1 && paymentRecords[0].provider === 'COD') {
+    const payment = paymentRecords[0]
+    if (
+      payment.status !== 'PENDING_COLLECTION'
+      || nonEmptyString(payment.providerOrderId)
+      || nonEmptyString(payment.providerPaymentId)
+      || nonEmptyString(payment.providerSignature)
+      || !nonEmptyString(payment.paymentAttemptKey)
+    ) {
+      throw new ShipmentValidationError('The COD collection obligation is invalid.')
+    }
+    const orderTotalCents = moneyInCents(order.totalPrice, 'order total')
+    const collectionCents = moneyInCents(payment.amount, 'COD collection amount')
+    if (
+      orderTotalCents <= 0
+      || orderTotalCents >= COD_MAX_TOTAL_CENTS
+      || collectionCents !== orderTotalCents
+      || payment.currency !== 'INR'
+      || order.currency !== 'INR'
+    ) {
+      throw new ShipmentValidationError('The COD collection amount does not match the outstanding order total.')
+    }
+    return { payment, paymentMethod: 'COD', codAmount: moneyFromCents(collectionCents) }
+  }
+
   const prepaidPayments = paymentRecords.filter((payment) => (
     payment.provider === 'RAZORPAY'
     && ['AUTHORIZED', 'CAPTURED'].includes(payment.status)
@@ -174,7 +200,7 @@ const buildCustomOrder = (order, shipment, env) => {
   }
 
   const { pickupLocation, packageDetails } = readPackageConfig(env, shipment)
-  const { payment, paymentMethod } = paymentForOrder(order)
+  const { payment, paymentMethod, codAmount } = paymentForOrder(order)
   const shippingSource = parseStoredAddress(order.shippingAddress)
   const billingSource = order.billingAddress == null
     ? shippingSource
@@ -272,6 +298,7 @@ const buildCustomOrder = (order, shipment, env) => {
     shipping_charges: moneyFromCents(shippingCents),
     ...packageDetails,
   }
+  if (paymentMethod === 'COD') payload.cod_amount = codAmount
 
   if (!billingMatchesShipping) {
     payload.shipping_customer_name = recipient.first

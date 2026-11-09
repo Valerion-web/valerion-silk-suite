@@ -11,6 +11,8 @@ import {
   addWishlistItem,
   removeWishlistItem,
   validateCheckout,
+  getCodEligibility,
+  createCodOrder,
   createOrder,
   getOrders,
   getOrder,
@@ -31,6 +33,8 @@ router.post('/wishlist/items', requireConcreteStore, addWishlistItem)
 router.delete('/wishlist/items/:productId', requireConcreteStore, removeWishlistItem)
 
 router.post('/checkout/validate', requireConcreteStore, validateCheckout)
+router.post('/checkout/cod/eligibility', requireConcreteStore, getCodEligibility)
+router.post('/checkout/cod', requireConcreteStore, createCodOrder)
 router.post('/checkout', requireConcreteStore, createOrder)
 router.post('/orders', requireConcreteStore, createOrder)
 router.get('/orders', requireConcreteStore, getOrders)

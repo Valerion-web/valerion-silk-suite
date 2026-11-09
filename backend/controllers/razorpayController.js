@@ -99,6 +99,12 @@ export const createRazorpayOrder = async (req, res, next) => {
           return { payment: existingAttempt, created: false }
         }
 
+        const codPayment = await tx.payment.findFirst({
+          where: { userId: req.user.id, storeId: req.store.id, idempotencyKey, provider: 'COD' },
+          select: { id: true },
+        })
+        if (codPayment) throw paymentConflict('This checkout is already reserved for cash on delivery')
+
         const finalizedOrder = await tx.order.findUnique({
           where: { userId_storeId_idempotencyKey: { userId: req.user.id, storeId: req.store.id, idempotencyKey } },
           select: { id: true },

@@ -251,6 +251,42 @@ test('creates an Order and queues one Shipment idempotently in a transaction', a
   )
 })
 
+test('enforces the Phase 2 COD payment state and rejects Razorpay references', async () => {
+  const { order } = await createOrderAndShipment()
+  const makePayment = (status, suffix, extra = {}) => ({
+    userId: testUserId,
+    storeId: testStoreId,
+    orderId: order.id,
+    provider: 'COD',
+    status,
+    amount: 1,
+    currency: 'INR',
+    idempotencyKey: `${fixturePrefix}-${suffix}`,
+    paymentAttemptKey: `${fixturePrefix}-${suffix}`,
+    ...extra,
+  })
+
+  const payment = await prisma.payment.create({
+    data: makePayment('PENDING_COLLECTION', 'phase2-valid'),
+  })
+  fixtureIds.payment.push(payment.id)
+
+  for (const status of ['CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED', 'REFUNDED', 'CANCELLED']) {
+    await assert.rejects(prisma.payment.create({
+      data: makePayment(status, `phase2-invalid-${status}`),
+    }))
+  }
+
+  for (const [field, value] of [
+    ['providerOrderId', `${fixturePrefix}-phase2-razorpay-order`],
+    ['providerPaymentId', `${fixturePrefix}-phase2-razorpay-payment`],
+  ]) {
+    await assert.rejects(prisma.payment.create({
+      data: makePayment('PENDING_COLLECTION', `phase2-invalid-${field}`, { [field]: value }),
+    }))
+  }
+})
+
 test('persists valid package confirmation and rejects invalid or incomplete package data', async () => {
   const { shipment } = await createOrderAndShipment()
   const confirmedAt = new Date()
@@ -449,6 +485,20 @@ test('allows a Shipment in multiple manifests and rejects duplicate membership p
 
 test('persists, deduplicates, and orders tracking events without regressing latest status', async () => {
   const { order, shipment } = await createOrderAndShipment()
+  const payment = await prisma.payment.create({
+    data: {
+      userId: testUserId,
+      storeId: testStoreId,
+      orderId: order.id,
+      provider: 'COD',
+      status: 'PENDING_COLLECTION',
+      amount: order.totalPrice,
+      currency: 'INR',
+      idempotencyKey: `${fixturePrefix}-webhook-cod`,
+      paymentAttemptKey: `${fixturePrefix}-webhook-cod`,
+    },
+  })
+  fixtureIds.payment.push(payment.id)
   const awbCode = `${fixturePrefix}-awb`
   await prisma.shipment.update({
     where: { id: shipment.id },
@@ -526,7 +576,7 @@ test('persists, deduplicates, and orders tracking events without regressing late
   assert.equal(latestShipment.trackingStatus, 'Delivered')
   assert.equal(latestShipment.trackingStatusAt.toISOString(), '2026-11-08T12:00:00.000Z')
   const unchangedPayment = await prisma.payment.findUnique({ where: { id: payment.id } })
-  assert.equal(unchangedPayment.status, 'FAILED')
+  assert.equal(unchangedPayment.status, 'PENDING_COLLECTION')
 })
 
 test('rolls back an Order and queued Shipment together', async () => {

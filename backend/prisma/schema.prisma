@@ -449,6 +449,7 @@ enum ShipmentManifestStatus {
 
 enum PaymentProvider {
   RAZORPAY
+  COD
 }
 
 enum PaymentStatus {
@@ -458,6 +459,7 @@ enum PaymentStatus {
   FAILED
   REFUNDED
   CANCELLED
+  PENDING_COLLECTION
 }
 
 enum PaymentWebhookEventStatus {
