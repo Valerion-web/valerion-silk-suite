@@ -8,6 +8,7 @@ import PremiumDashboardPage from "@/components/admin/PremiumDashboard";
 import AdminLayout from "@/components/admin/AdminLayout";
 import InventoryDashboard from "@/components/admin/inventory/InventoryDashboard";
 import InventoryModule from "@/components/admin/inventory/InventoryModule";
+import ShipmentManagementPanel from "@/components/admin/ShipmentManagementPanel";
 import {
   BrandsPage as BrandsModulePage,
   ProductDetailsPage as ProductDetailsModulePage,
@@ -104,6 +105,20 @@ type OrderRecord = {
     note?: string | null;
     changedBy?: { id?: number; name?: string; email?: string } | null;
   }>;
+  shipment?: {
+    id?: number;
+    status?: string;
+    attemptCount?: number;
+    shiprocketOrderId?: string | null;
+    shiprocketShipmentId?: string | null;
+    packageWeightKg?: string | number | null;
+    packageLengthCm?: string | number | null;
+    packageBreadthCm?: string | number | null;
+    packageHeightCm?: string | number | null;
+    packageConfirmedAt?: string | null;
+    packageConfirmedById?: number | null;
+    packageConfirmedBy?: { id: number; name?: string | null } | null;
+  } | null;
 };
 
 type CategoryRecord = {
@@ -3620,6 +3635,13 @@ function OrderDetailsPage() {
           </div>
         </div>
       </section>
+      {!isParentContext && order.shipment?.id && (
+        <ShipmentManagementPanel
+          shipmentId={order.shipment.id}
+          orderId={order.id}
+          initialPackage={order.shipment}
+        />
+      )}
     </div>
   );
 }
