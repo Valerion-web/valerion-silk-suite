@@ -50,6 +50,7 @@ model User {
   updatedAt      DateTime             @updatedAt
   orders         Order[]
   payments       Payment[]
+  collectedCodPayments Payment[]            @relation("CodCollectedBy")
   addresses      Address[]
   auditLogs      AuditLog[]           @relation("ActorAuditLogs")
   statusChanges  OrderStatusHistory[]
@@ -460,6 +461,7 @@ enum PaymentStatus {
   REFUNDED
   CANCELLED
   PENDING_COLLECTION
+  COD_COLLECTED
 }
 
 enum PaymentWebhookEventStatus {
@@ -484,6 +486,9 @@ model Payment {
   idempotencyKey     String?
   paymentAttemptKey  String?
   checkoutSnapshot   Json?
+  codCollectedAt    DateTime?       @db.Timestamp(3)
+  codCollectedBy    User?           @relation("CodCollectedBy", fields: [codCollectedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  codCollectedById  Int?
   amount             Float
   currency           String          @default("INR")
   status             PaymentStatus   @default(CREATED)
@@ -496,6 +501,7 @@ model Payment {
   @@index([idempotencyKey])
   @@index([userId, storeId, idempotencyKey])
   @@unique([userId, storeId, paymentAttemptKey])
+  @@index([codCollectedById])
 }
 
 model PaymentWebhookEvent {

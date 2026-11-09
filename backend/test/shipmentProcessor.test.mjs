@@ -315,6 +315,7 @@ test('rejects invalid COD amount, state, and provider identifiers before submiss
     ['amount inconsistent with the order', (payment) => { payment.amount = 22 }],
     ['wrong currency', (payment) => { payment.currency = 'USD' }],
     ['wrong state', (payment) => { payment.status = 'CAPTURED' }],
+    ['already collected', (payment) => { payment.status = 'COD_COLLECTED' }],
     ['Razorpay identifiers on a COD payment', (payment) => { payment.providerPaymentId = 'pay_test' }],
   ]) {
     await t.test(name, async () => {

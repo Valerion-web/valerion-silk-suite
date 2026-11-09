@@ -15,6 +15,7 @@ import {
   deleteAdminProduct,
   getAdminOrders,
   updateAdminOrderStatus,
+  collectAdminCodPayment,
   deleteAdminOrder,
   getAdminCategories,
   createAdminCategory,
@@ -67,6 +68,7 @@ router.route('/products').get(requireCapability('products'), getAdminProducts).p
 router.route('/products/:id').get(requireCapability('products'), getAdminProductById).put(requireCapability('products'), requireConcreteStore, updateAdminProduct).delete(requireCapability('products'), requireConcreteStore, deleteAdminProduct)
 router.route('/orders').get(requireCapability('orders'), getAdminOrders)
 router.patch('/orders/:id/status', requireCapability('orders'), requireConcreteStore, updateAdminOrderStatus)
+router.post('/orders/:id/cod-collection', requireCapability('orders'), requireConcreteStore, collectAdminCodPayment)
 router.route('/orders/:id').delete(requireCapability('orders'), requireConcreteStore, deleteAdminOrder)
 router.get('/inventory', requireCapability('inventory'), getAdminInventory)
 router.get('/inventory/low-stock', requireCapability('inventory'), getLowStockInventory)

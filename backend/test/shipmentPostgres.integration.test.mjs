@@ -3,6 +3,10 @@ import { randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
 import { PrismaClient } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
+import {
+  cancelOrderWithCodPayment,
+  createAdminCodCollectionHandler,
+} from '../services/adminCodPaymentLifecycle.js'
 import { createCourierTrackingWebhookHandler } from '../services/courierTrackingWebhook.js'
 import { queueShipment } from '../services/shipmentQueue.js'
 
@@ -251,7 +255,7 @@ test('creates an Order and queues one Shipment idempotently in a transaction', a
   )
 })
 
-test('enforces the Phase 2 COD payment state and rejects Razorpay references', async () => {
+test('enforces the COD payment state and rejects Razorpay references', async () => {
   const { order } = await createOrderAndShipment()
   const makePayment = (status, suffix, extra = {}) => ({
     userId: testUserId,
@@ -271,7 +275,7 @@ test('enforces the Phase 2 COD payment state and rejects Razorpay references', a
   })
   fixtureIds.payment.push(payment.id)
 
-  for (const status of ['CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED', 'REFUNDED', 'CANCELLED']) {
+  for (const status of ['CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED']) {
     await assert.rejects(prisma.payment.create({
       data: makePayment(status, `phase2-invalid-${status}`),
     }))
@@ -285,6 +289,208 @@ test('enforces the Phase 2 COD payment state and rejects Razorpay references', a
       data: makePayment('PENDING_COLLECTION', `phase2-invalid-${field}`, { [field]: value }),
     }))
   }
+})
+
+test('enforces COD payment states and identifiers without restricting Razorpay lifecycle states', async () => {
+  const { order } = await createOrderAndShipment()
+  const makePayment = (provider, status, suffix, extra = {}) => ({
+    userId: testUserId,
+    storeId: testStoreId,
+    orderId: order.id,
+    provider,
+    status,
+    amount: 1,
+    currency: 'INR',
+    idempotencyKey: `${fixturePrefix}-${suffix}`,
+    paymentAttemptKey: `${fixturePrefix}-${suffix}`,
+    ...extra,
+  })
+
+  for (const [status, audit] of [
+    ['PENDING_COLLECTION', {}],
+    ['COD_COLLECTED', { codCollectedAt: new Date(), codCollectedById: testUserId }],
+    ['CANCELLED', {}],
+    ['REFUNDED', { codCollectedAt: new Date(), codCollectedById: testUserId }],
+  ]) {
+    const payment = await prisma.payment.create({
+      data: makePayment('COD', status, `allowed-${status}`, audit),
+    })
+    fixtureIds.payment.push(payment.id)
+    assert.equal(payment.status, status)
+  }
+
+  for (const status of ['CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED']) {
+    await assert.rejects(prisma.payment.create({
+      data: makePayment('COD', status, `rejected-${status}`),
+    }))
+  }
+
+  for (const [field, value] of [
+    ['providerOrderId', `${fixturePrefix}-razorpay-order`],
+    ['providerPaymentId', `${fixturePrefix}-razorpay-payment`],
+    ['providerSignature', 'fixture-signature'],
+  ]) {
+    await assert.rejects(prisma.payment.create({
+      data: makePayment('COD', 'PENDING_COLLECTION', `rejected-${field}`, { [field]: value }),
+    }))
+  }
+
+  for (const [status, audit] of [
+    ['COD_COLLECTED', {}],
+    ['REFUNDED', {}],
+    ['PENDING_COLLECTION', { codCollectedAt: new Date(), codCollectedById: testUserId }],
+    ['CANCELLED', { codCollectedAt: new Date(), codCollectedById: testUserId }],
+  ]) {
+    await assert.rejects(prisma.payment.create({
+      data: makePayment('COD', status, `rejected-audit-${status}`, audit),
+    }))
+  }
+
+  for (const status of ['CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED', 'REFUNDED', 'CANCELLED']) {
+    const payment = await prisma.payment.create({
+      data: makePayment('RAZORPAY', status, `razorpay-${status}`),
+    })
+    fixtureIds.payment.push(payment.id)
+    assert.equal(payment.status, status)
+  }
+})
+
+test('admin COD collection is conditional, audited, and safe under concurrent confirmation', async () => {
+  const { order, shipment } = await createOrderAndShipment()
+  const payment = await prisma.payment.create({
+    data: {
+      userId: testUserId,
+      storeId: testStoreId,
+      orderId: order.id,
+      provider: 'COD',
+      status: 'PENDING_COLLECTION',
+      amount: order.totalPrice,
+      currency: 'INR',
+      idempotencyKey: `${fixturePrefix}-collection`,
+      paymentAttemptKey: `${fixturePrefix}-collection`,
+    },
+  })
+  fixtureIds.payment.push(payment.id)
+  await prisma.shipment.update({
+    where: { id: shipment.id },
+    data: { trackingStatus: 'Delivered', trackingStatusAt: new Date() },
+  })
+
+  const handler = createAdminCodCollectionHandler({
+    prismaClient: prisma,
+    storeScope: (req, where = {}) => ({ ...where, storeId: req.store.id }),
+  })
+  const invoke = async () => {
+    const response = {
+      statusCode: 200,
+      body: null,
+      status(code) {
+        this.statusCode = code
+        return this
+      },
+      json(body) {
+        this.body = body
+        return this
+      },
+    }
+    await handler({
+      params: { id: String(order.id) },
+      store: { id: testStoreId },
+      user: { id: testUserId },
+      body: { confirmCashReconciled: true, reconciledAmount: order.totalPrice },
+    }, response, (error) => { throw error })
+    return response
+  }
+
+  const results = await Promise.all([invoke(), invoke()])
+  assert.deepEqual(results.map((result) => result.statusCode).sort(), [200, 409])
+  const saved = await prisma.payment.findUnique({ where: { id: payment.id } })
+  assert.equal(saved.provider, 'COD')
+  assert.equal(saved.status, 'COD_COLLECTED')
+  assert.ok(saved.codCollectedAt instanceof Date)
+  assert.equal(saved.codCollectedById, testUserId)
+})
+
+test('cancels pending COD atomically and refuses cancellation after collection', async (t) => {
+  await t.test('pending collection', async () => {
+    const { order } = await createOrderAndShipment()
+    const payment = await prisma.payment.create({
+      data: {
+        userId: testUserId,
+        storeId: testStoreId,
+        orderId: order.id,
+        provider: 'COD',
+        status: 'PENDING_COLLECTION',
+        amount: order.totalPrice,
+        currency: 'INR',
+        idempotencyKey: `${fixturePrefix}-cancel-pending`,
+        paymentAttemptKey: `${fixturePrefix}-cancel-pending`,
+      },
+    })
+    fixtureIds.payment.push(payment.id)
+
+    await prisma.$transaction(async (transaction) => {
+      const currentOrder = await transaction.order.findUnique({
+        where: { id: order.id },
+        include: { payments: true },
+      })
+      await cancelOrderWithCodPayment(transaction, currentOrder, {
+        note: 'Integration fixture cancellation',
+        adminId: testUserId,
+      })
+    }, { isolationLevel: 'Serializable' })
+
+    const [savedOrder, savedPayment, history] = await Promise.all([
+      prisma.order.findUnique({ where: { id: order.id } }),
+      prisma.payment.findUnique({ where: { id: payment.id } }),
+      prisma.orderStatusHistory.findMany({ where: { orderId: order.id } }),
+    ])
+    assert.equal(savedOrder.status, 'CANCELLED')
+    assert.equal(savedPayment.status, 'CANCELLED')
+    assert.equal(savedPayment.codCollectedAt, null)
+    assert.equal(savedPayment.codCollectedById, null)
+    assert.equal(history.length, 1)
+  })
+
+  await t.test('collected payment', async () => {
+    const { order } = await createOrderAndShipment()
+    const payment = await prisma.payment.create({
+      data: {
+        userId: testUserId,
+        storeId: testStoreId,
+        orderId: order.id,
+        provider: 'COD',
+        status: 'COD_COLLECTED',
+        amount: order.totalPrice,
+        currency: 'INR',
+        idempotencyKey: `${fixturePrefix}-cancel-collected`,
+        paymentAttemptKey: `${fixturePrefix}-cancel-collected`,
+        codCollectedAt: new Date(),
+        codCollectedById: testUserId,
+      },
+    })
+    fixtureIds.payment.push(payment.id)
+
+    await assert.rejects(prisma.$transaction(async (transaction) => {
+      const currentOrder = await transaction.order.findUnique({
+        where: { id: order.id },
+        include: { payments: true },
+      })
+      await cancelOrderWithCodPayment(transaction, currentOrder, {
+        note: 'Integration fixture cancellation',
+        adminId: testUserId,
+      })
+    }, { isolationLevel: 'Serializable' }), { statusCode: 409 })
+
+    const [savedOrder, savedPayment, historyCount] = await Promise.all([
+      prisma.order.findUnique({ where: { id: order.id } }),
+      prisma.payment.findUnique({ where: { id: payment.id } }),
+      prisma.orderStatusHistory.count({ where: { orderId: order.id } }),
+    ])
+    assert.equal(savedOrder.status, 'PLACED')
+    assert.equal(savedPayment.status, 'COD_COLLECTED')
+    assert.equal(historyCount, 0)
+  })
 })
 
 test('persists valid package confirmation and rejects invalid or incomplete package data', async () => {
@@ -577,6 +783,8 @@ test('persists, deduplicates, and orders tracking events without regressing late
   assert.equal(latestShipment.trackingStatusAt.toISOString(), '2026-11-08T12:00:00.000Z')
   const unchangedPayment = await prisma.payment.findUnique({ where: { id: payment.id } })
   assert.equal(unchangedPayment.status, 'PENDING_COLLECTION')
+  assert.equal(unchangedPayment.codCollectedAt, null)
+  assert.equal(unchangedPayment.codCollectedById, null)
 })
 
 test('rolls back an Order and queued Shipment together', async () => {

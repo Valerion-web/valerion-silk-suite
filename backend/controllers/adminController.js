@@ -5,6 +5,7 @@ import { deleteOrderIfUnshipped } from '../services/orderDeletion.js'
 import { validateShipmentPackageMeasurements } from '../services/shipmentPackageMeasurements.js'
 import { createShipmentOperationsService } from '../services/shipmentOperations.js'
 import { createAdminShipmentOperationsHandler } from '../services/adminShipmentManagement.js'
+import { cancelOrderWithCodPayment, createAdminCodCollectionHandler } from '../services/adminCodPaymentLifecycle.js'
 
 const adminRoles = ['SUPER_ADMIN', 'ADMIN', 'BRAND_MANAGER', 'INVENTORY_MANAGER', 'ORDER_MANAGER', 'MARKETING_MANAGER']
 const VALID_ORDER_STATUSES = new Set(['PLACED', 'PENDING', 'PROCESSING', 'PACKED', 'SHIPPED', 'DELIVERED', 'CANCELLED'])
@@ -13,6 +14,10 @@ const shipmentOperations = createShipmentOperationsService({ prismaClient: prism
 const storeScope = (req, where = {}) => {
   return storeWhere(req, where)
 }
+const confirmAdminCodCollection = createAdminCodCollectionHandler({
+  prismaClient: prisma,
+  storeScope,
+})
 
 let settingsStore = {
   storeName: 'House of Valerion',
@@ -655,6 +660,32 @@ export const updateAdminOrderStatus = async (req, res, next) => {
       throw new Error('Unsupported order status')
     }
 
+    if (incomingStatus === 'CANCELLED') {
+      try {
+        const updatedOrder = await prisma.$transaction(async (transaction) => {
+          const order = await transaction.order.findFirst({
+            where: storeScope(req, { id: orderId }),
+            include: {
+              payments: true,
+              user: true,
+              items: { include: { product: true, variant: true } },
+              statusHistory: { orderBy: { createdAt: 'asc' } },
+            },
+          })
+          if (!order) throw Object.assign(new Error('Order not found'), { statusCode: 404 })
+
+          return cancelOrderWithCodPayment(transaction, order, { note, adminId: req.user.id })
+        }, { isolationLevel: 'Serializable' })
+        return res.json(formatOrder(updatedOrder))
+      } catch (error) {
+        if (error?.statusCode) return res.status(error.statusCode).json({ message: error.message })
+        if (error?.code === 'P2034') {
+          return res.status(409).json({ message: 'Order payment state changed concurrently; refresh and retry cancellation' })
+        }
+        throw error
+      }
+    }
+
     const order = await prisma.order.findFirst({ where: storeScope(req, { id: orderId }) })
     if (!order) {
       res.status(404)
@@ -681,6 +712,8 @@ export const updateAdminOrderStatus = async (req, res, next) => {
     next(error)
   }
 }
+
+export const collectAdminCodPayment = (req, res, next) => confirmAdminCodCollection(req, res, next)
 
 export const deleteAdminOrder = async (req, res, next) => {
   try {
@@ -1547,6 +1580,17 @@ export const getAdminOrderById = async (req, res, next) => {
         store: true,
         items: { include: { product: true, variant: true } },
         statusHistory: { include: { changedBy: true }, orderBy: { createdAt: 'asc' } },
+        payments: {
+          select: {
+            id: true,
+            provider: true,
+            status: true,
+            amount: true,
+            currency: true,
+            codCollectedAt: true,
+            codCollectedBy: { select: { id: true, name: true, email: true } },
+          },
+        },
         shipment: {
           select: {
             id: true,

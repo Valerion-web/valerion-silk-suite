@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, ExternalLink, PackageCheck, RefreshCw, Truck } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ExternalLink,
+  PackageCheck,
+  RefreshCw,
+  Truck,
+} from "lucide-react";
 import { adminApiFetch } from "@/lib/admin-api";
 import { toast } from "sonner";
 
@@ -51,6 +58,16 @@ type ShipmentDetails = {
     occurredAt?: string | null;
   }>;
   manifestItems: Array<{ manifest: Manifest }>;
+};
+
+type PaymentDetails = {
+  id: number;
+  provider: string;
+  status: string;
+  amount: number | string;
+  currency: string;
+  codCollectedAt?: string | null;
+  codCollectedBy?: { id: number; name?: string | null; email?: string | null } | null;
 };
 
 type PackageConfirmation = {
@@ -136,6 +153,17 @@ const formatDate = (value?: string | null) => {
   return Number.isNaN(date.getTime()) ? "Not available" : date.toLocaleString();
 };
 
+const formatMoney = (value: number | string, currency: string) => {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "Not available";
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+};
+
 const isReconciliationRequired = (status?: string) => status === "RECONCILIATION_REQUIRED";
 
 class ShipmentRequestError extends Error {
@@ -181,6 +209,7 @@ function ShipmentManagementPanel({
   initialPackage: PackageConfirmation;
 }) {
   const [shipment, setShipment] = useState<ShipmentDetails | null>(null);
+  const [payment, setPayment] = useState<PaymentDetails | null>(null);
   const [courierId, setCourierId] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -189,6 +218,10 @@ function ShipmentManagementPanel({
   const [packageInfo, setPackageInfo] = useState<PackageConfirmation>(initialPackage);
   const [packageLocked, setPackageLocked] = useState(false);
   const packageSubmitting = useRef(false);
+  const collectionSubmitting = useRef(false);
+  const [collectionConfirmed, setCollectionConfirmed] = useState(false);
+  const [collectionError, setCollectionError] = useState("");
+  const [collectionNeedsRefresh, setCollectionNeedsRefresh] = useState(false);
   const [packageMeasurements, setPackageMeasurements] = useState(() => ({
     packageWeightKg:
       initialPackage.packageWeightKg == null ? "" : String(initialPackage.packageWeightKg),
@@ -221,14 +254,28 @@ function ShipmentManagementPanel({
   const refresh = useCallback(async () => {
     try {
       setError("");
-      const body = await shipmentRequest(`/shipments/${shipmentId}/operations`);
-      setShipment(body.shipment as ShipmentDetails);
+      const [shipmentBody, orderBody] = await Promise.all([
+        shipmentRequest(`/shipments/${shipmentId}/operations`),
+        shipmentRequest(`/orders/${orderId}`),
+      ]);
+      if (!shipmentBody?.shipment || !Array.isArray(orderBody?.payments)) {
+        throw new Error("Shipment or payment details were incomplete.");
+      }
+      setShipment(shipmentBody.shipment as ShipmentDetails);
+      setPayment(
+        (orderBody.payments as PaymentDetails[]).find((record) => record.provider === "COD") ??
+          null,
+      );
+      setCollectionConfirmed(false);
+      setCollectionNeedsRefresh(false);
+      return true;
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to load shipment operations.");
+      return false;
     } finally {
       setLoading(false);
     }
-  }, [shipmentId]);
+  }, [orderId, shipmentId]);
 
   useEffect(() => {
     void refresh();
@@ -296,6 +343,67 @@ function ShipmentManagementPanel({
     }
   };
 
+  const confirmCodCollection = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (
+      busy ||
+      collectionSubmitting.current ||
+      !collectionConfirmed ||
+      !payment ||
+      payment.provider !== "COD" ||
+      payment.status !== "PENDING_COLLECTION" ||
+      shipment?.trackingStatus?.trim().toUpperCase() !== "DELIVERED"
+    ) {
+      return;
+    }
+
+    const amount = Number(payment.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setCollectionError(
+        "The outstanding COD amount is invalid. Refresh order details before continuing.",
+      );
+      return;
+    }
+
+    collectionSubmitting.current = true;
+    setBusy(true);
+    setCollectionError("");
+    try {
+      await shipmentRequest(`/orders/${orderId}/cod-collection`, {
+        method: "POST",
+        body: JSON.stringify({
+          confirmCashReconciled: true,
+          reconciledAmount: amount,
+        }),
+      });
+      setCollectionConfirmed(false);
+      const refreshed = await refresh();
+      if (refreshed) {
+        toast.success("COD collection confirmed and recorded.", { className: "luxury-toast" });
+      } else {
+        setCollectionNeedsRefresh(true);
+        setCollectionError(
+          "Collection was submitted. Refresh the order details to verify its recorded status.",
+        );
+      }
+    } catch (requestError) {
+      const isConflict =
+        requestError instanceof ShipmentRequestError && requestError.statusCode === 409;
+      const refreshed = await refresh();
+      const message = isConflict
+        ? "COD status changed or could not be collected. Current order details were refreshed; verify the status before trying again."
+        : requestError instanceof Error
+          ? requestError.message
+          : "Unable to confirm COD collection.";
+      setCollectionNeedsRefresh(!refreshed);
+      setCollectionError(refreshed ? message : `${message} Refresh order details before retrying.`);
+      toast.error(message, { className: "luxury-toast" });
+    } finally {
+      collectionSubmitting.current = false;
+      setBusy(false);
+    }
+  };
+
   if (loading) {
     return <section className="rounded-[24px] border border-slate-200 bg-white p-6 text-sm text-[#64748B]">Loading shipment details...</section>;
   }
@@ -329,6 +437,91 @@ function ShipmentManagementPanel({
       </div>
 
       {error && <p role="alert" className="text-sm text-rose-700">{error}</p>}
+      {payment?.provider === "COD" && (
+        <section
+          className="space-y-4 border-t border-slate-100 pt-5"
+          aria-labelledby="cod-collection-heading"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h4 id="cod-collection-heading" className="font-semibold text-[#041E42]">
+                Cash on delivery
+              </h4>
+              <p className="mt-1 text-sm text-[#64748B]">
+                Payment status: <strong>{payment.status.replaceAll("_", " ")}</strong>
+              </p>
+            </div>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+              {payment.status.replaceAll("_", " ")}
+            </span>
+          </div>
+          <Info
+            label={
+              payment.status === "PENDING_COLLECTION" ? "Outstanding COD amount" : "COD amount"
+            }
+            value={formatMoney(payment.amount, payment.currency)}
+          />
+
+          {payment.status === "COD_COLLECTED" ? (
+            <div
+              role="status"
+              className="flex gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900"
+            >
+              <CheckCircle2 aria-hidden="true" className="h-5 w-5 shrink-0" />
+              <div>
+                <p className="font-semibold">Cash collection recorded</p>
+                <p className="mt-1">Confirmed {formatDate(payment.codCollectedAt)}</p>
+                <p>
+                  By{" "}
+                  {payment.codCollectedBy?.name ||
+                    payment.codCollectedBy?.email ||
+                    `Administrator #${payment.codCollectedBy?.id ?? "unknown"}`}
+                </p>
+              </div>
+            </div>
+          ) : payment.status === "PENDING_COLLECTION" &&
+            shipment.trackingStatus?.trim().toUpperCase() === "DELIVERED" ? (
+            <form onSubmit={confirmCodCollection} className="space-y-3">
+              <label className="flex items-start gap-3 text-sm text-[#475569]">
+                <input
+                  type="checkbox"
+                  checked={collectionConfirmed}
+                  onChange={(inputEvent) => setCollectionConfirmed(inputEvent.target.checked)}
+                  disabled={busy}
+                  required
+                  className="mt-1"
+                />
+                <span>
+                  I confirm courier cash was reconciled against the exact outstanding amount of{" "}
+                  <strong>{formatMoney(payment.amount, payment.currency)}</strong>.
+                </span>
+              </label>
+              {collectionError && (
+                <p role="alert" className="text-sm text-rose-700">
+                  {collectionError}
+                </p>
+              )}
+              <button
+                type="submit"
+                disabled={
+                  busy ||
+                  !collectionConfirmed ||
+                  collectionSubmitting.current ||
+                  collectionNeedsRefresh
+                }
+                className="rounded-full bg-[#041E42] px-4 py-2.5 text-xs font-semibold text-white hover:bg-[#072e63] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy ? "Recording collection..." : "Confirm reconciled cash collection"}
+              </button>
+            </form>
+          ) : payment.status === "PENDING_COLLECTION" ? (
+            <p className="text-sm text-[#64748B]">
+              Collection confirmation is available only after the courier marks this shipment
+              delivered.
+            </p>
+          ) : null}
+        </section>
+      )}
 
       {operationNeedsAttention && (
         <div className="flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
