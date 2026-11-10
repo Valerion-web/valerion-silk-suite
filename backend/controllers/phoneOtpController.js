@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import prisma from '../lib/prisma.js'
 import { issueAuthSession } from './authController.js'
@@ -21,12 +22,78 @@ const isHastonCustomer = (req) => (
   req.user.storeId === req.store.id
 )
 
+const isEligiblePhoneCustomer = (user, storeId) => (
+  user?.isActive === true &&
+  user.role === 'CUSTOMER' &&
+  user.storeId === storeId
+)
+
 const isUniqueConflict = (error) => error?.code === 'P2002'
 const isValidOtp = (otp) => typeof otp === 'string' && /^\d{1,12}$/.test(otp)
+const requestIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const safeExceptionTypes = new Set([
+  'Error',
+  'TypeError',
+  'RangeError',
+  'PrismaClientKnownRequestError',
+  'PrismaClientUnknownRequestError',
+  'PrismaClientValidationError',
+  'PrismaClientInitializationError',
+])
 
-const logFailure = (event, error) => {
-  const type = error instanceof Error ? error.constructor.name : 'Error'
-  console.warn(JSON.stringify({ event, exceptionType: type }))
+const getRequestCorrelationId = (req, requestIdFactory) => {
+  const existingId = req.requestId ?? req.id
+  return typeof existingId === 'string' && requestIdPattern.test(existingId)
+    ? existingId
+    : requestIdFactory()
+}
+
+const getSafeExceptionType = (error) => {
+  const type = error instanceof Error ? error.constructor.name : ''
+  return safeExceptionTypes.has(type) ? type : 'Error'
+}
+
+const uniqueConstraintLabelsByFields = new Map([
+  ['email', 'user_email'],
+  ['provider,providerSubject', 'provider_subject'],
+  ['provider,userId', 'user_provider'],
+])
+const uniqueConstraintLabelsByName = new Map([
+  ['User_email_key', 'user_email'],
+  ['User_pkey', 'user_id'],
+  ['AuthIdentity_pkey', 'auth_identity_id'],
+  ['AuthIdentity_provider_providerSubject_key', 'provider_subject'],
+  ['AuthIdentity_userId_provider_key', 'user_provider'],
+])
+const safeUniqueConflictOperations = new Set(['user_create', 'auth_identity_create', 'unknown'])
+
+const getSafeUniqueConstraint = (error) => {
+  if (error?.code !== 'P2002') return 'unknown'
+  const target = error.meta?.target
+  if (Array.isArray(target) && target.every((field) => typeof field === 'string')) {
+    return uniqueConstraintLabelsByFields.get([...target].sort().join(',')) || 'unknown'
+  }
+  if (typeof target === 'string') return uniqueConstraintLabelsByName.get(target) || 'unknown'
+  return 'unknown'
+}
+
+const logRegistrationFailure = ({ logger, requestIdFactory, req, stage, reasonCode, error, operation }) => {
+  try {
+    const event = {
+      event: 'phone_registration_failure',
+      requestId: getRequestCorrelationId(req, requestIdFactory),
+      stage,
+      reasonCode,
+    }
+    if (error) event.exceptionType = getSafeExceptionType(error)
+    if (reasonCode === 'PHONE_REGISTRATION_UNIQUE_CONFLICT') {
+      event.uniqueConstraint = getSafeUniqueConstraint(error)
+      event.operation = safeUniqueConflictOperations.has(operation) ? operation : 'unknown'
+    }
+    logger?.warn?.(JSON.stringify(event))
+  } catch {
+    return
+  }
 }
 
 export const createPhoneOtpHandlers = ({
@@ -36,6 +103,8 @@ export const createPhoneOtpHandlers = ({
   controls = phoneOtpControls,
   hashPassword = (password) => bcrypt.hash(password, 10),
   sessionIssuer = issueAuthSession,
+  logger = console,
+  requestIdFactory = randomUUID,
 } = {}) => {
   const getPhone = (req) => normalizeIndianPhone(req.body?.phone)
 
@@ -51,8 +120,8 @@ export const createPhoneOtpHandlers = ({
     let sent = false
     try {
       sent = await otpService.sendOtp(phone)
-    } catch (error) {
-      logFailure('phone_otp_send_failure', error)
+    } catch {
+      sent = false
     }
     if (!sent) {
       controls.releaseCooldown(phone)
@@ -61,46 +130,66 @@ export const createPhoneOtpHandlers = ({
     return res.status(200).json({ message: 'If eligible, a verification code was sent' })
   }
 
-  const verifyOtp = async (req, phone) => {
-    if (!phone || !isValidOtp(req.body?.otp)) return 'rejected'
+  const verifyProviderOtp = async (req, phone, onError) => {
+    if (!phone || !isValidOtp(req.body?.otp)) return false
     try {
-      if (!(await otpService.verifyOtp(phone, req.body.otp))) return 'rejected'
-      return await otpClaimer(prismaClient, phone, req.body.otp) ? 'claimed' : 'rejected'
+      return await otpService.verifyOtp(phone, req.body.otp)
     } catch (error) {
-      logFailure('phone_otp_verification_failure', error)
+      onError?.(error)
+      return false
+    }
+  }
+
+  const verifyAndClaimOtp = async (req, phone) => {
+    if (!(await verifyProviderOtp(req, phone))) return 'rejected'
+    try {
+      return await otpClaimer(prismaClient, phone, req.body.otp) ? 'claimed' : 'rejected'
+    } catch {
       return 'unavailable'
     }
   }
 
   const registerVerify = async (req, res) => {
     setNoStore(res)
-    if (!isHastonStoreContext(req)) return res.status(409).json({ message: registrationFailure })
+    if (!isHastonStoreContext(req)) {
+      logRegistrationFailure({ logger, requestIdFactory, req, stage: 'store_context', reasonCode: 'PHONE_REGISTRATION_STORE_CONTEXT_MISMATCH' })
+      return res.status(409).json({ message: registrationFailure })
+    }
 
     const phone = getPhone(req)
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : ''
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : ''
     const password = req.body?.password
-    if (!phone || !isValidOtp(req.body?.otp) || !name || name.length > 120 ||
-        !email.includes('@') || typeof password !== 'string' || password.length < 8) {
+    if (!phone || !isValidOtp(req.body?.otp) || !name || name.length > 120 || !email.includes('@') ||
+        typeof password !== 'string' || password.length < 8) {
+      logRegistrationFailure({ logger, requestIdFactory, req, stage: 'request_validation', reasonCode: 'PHONE_REGISTRATION_REQUEST_INVALID' })
       return res.status(400).json({ message: registrationFailure })
     }
 
-    let verified = false
-    try {
-      verified = await otpService.verifyOtp(phone, req.body.otp)
-    } catch (error) {
-      logFailure('phone_otp_registration_provider_failure', error)
+    let providerError
+    if (!(await verifyProviderOtp(req, phone, (error) => { providerError = error }))) {
+      logRegistrationFailure({
+        logger,
+        requestIdFactory,
+        req,
+        stage: 'provider_verification',
+        reasonCode: 'PHONE_REGISTRATION_PROVIDER_VERIFICATION_REJECTED',
+        error: providerError,
+      })
+      return res.status(401).json({ message: registrationFailure })
     }
-    if (!verified) return res.status(401).json({ message: registrationFailure })
 
-    let claimed
+    let otpClaimed
     try {
-      claimed = await otpClaimer(prismaClient, phone, req.body.otp)
+      otpClaimed = await otpClaimer(prismaClient, phone, req.body.otp)
     } catch (error) {
-      logFailure('phone_otp_registration_claim_failure', error)
+      logRegistrationFailure({ logger, requestIdFactory, req, stage: 'otp_claim', reasonCode: 'PHONE_REGISTRATION_OTP_CLAIM_FAILED', error })
       return res.status(500).json({ message: registrationFailure })
     }
-    if (!claimed) return res.status(401).json({ message: registrationFailure })
+    if (!otpClaimed) {
+      logRegistrationFailure({ logger, requestIdFactory, req, stage: 'otp_claim', reasonCode: 'PHONE_REGISTRATION_OTP_CLAIM_REJECTED' })
+      return res.status(401).json({ message: registrationFailure })
+    }
 
     try {
       const existingIdentity = await prismaClient.authIdentity.findUnique({
@@ -112,24 +201,54 @@ export const createPhoneOtpHandlers = ({
           message: 'This phone is already linked to an account. Please sign in.',
         })
       }
+    } catch (error) {
+      logRegistrationFailure({ logger, requestIdFactory, req, stage: 'identity_lookup', reasonCode: 'PHONE_REGISTRATION_IDENTITY_LOOKUP_FAILED', error })
+      return res.status(500).json({ message: registrationFailure })
+    }
 
+    let user
+    let accountCreationOperation = 'unknown'
+    try {
       const hashedPassword = await hashPassword(password)
-      const user = await prismaClient.$transaction(async (transaction) => {
+      user = await prismaClient.$transaction(async (transaction) => {
+        accountCreationOperation = 'user_create'
         const createdUser = await transaction.user.create({
-          data: { name, email, password: hashedPassword, role: 'CUSTOMER', storeId: req.store.id },
+          data: {
+            name,
+            email,
+            password: hashedPassword,
+            role: 'CUSTOMER',
+            storeId: req.store.id,
+          },
         })
+        accountCreationOperation = 'unknown'
+        accountCreationOperation = 'auth_identity_create'
         await transaction.authIdentity.create({
           data: { provider: 'phone', providerSubject: phone, userId: createdUser.id },
         })
+        accountCreationOperation = 'unknown'
         return createdUser
       })
+    } catch (error) {
+      if (isUniqueConflict(error)) {
+        logRegistrationFailure({ logger, requestIdFactory, req, stage: 'account_creation', reasonCode: 'PHONE_REGISTRATION_UNIQUE_CONFLICT', error, operation: accountCreationOperation })
+        if (getSafeUniqueConstraint(error) === 'provider_subject') {
+          return res.status(409).json({
+            code: 'PHONE_ALREADY_LINKED',
+            message: 'This phone is already linked to an account. Please sign in.',
+          })
+        }
+        return res.status(409).json({ message: registrationFailure })
+      }
+      logRegistrationFailure({ logger, requestIdFactory, req, stage: 'account_creation', reasonCode: 'PHONE_REGISTRATION_ACCOUNT_CREATION_FAILED', error })
+      return res.status(500).json({ message: registrationFailure })
+    }
+
+    try {
       const sanitizedUser = sessionIssuer(user, res)
       return res.status(201).json({ user: sanitizedUser, message: 'Registration successful' })
     } catch (error) {
-      if (isUniqueConflict(error)) {
-        return res.status(409).json({ message: registrationFailure })
-      }
-      logFailure('phone_otp_registration_failure', error)
+      logRegistrationFailure({ logger, requestIdFactory, req, stage: 'session_issuance', reasonCode: 'PHONE_REGISTRATION_SESSION_ISSUANCE_FAILED', error })
       return res.status(500).json({ message: registrationFailure })
     }
   }
@@ -138,9 +257,13 @@ export const createPhoneOtpHandlers = ({
     setNoStore(res)
     if (!isHastonStoreContext(req)) return res.status(409).json({ message: genericAuthFailure })
     const phone = getPhone(req)
-    const claim = await verifyOtp(req, phone)
-    if (claim !== 'claimed') {
-      return res.status(claim === 'unavailable' ? 500 : 401).json({ message: genericAuthFailure })
+    if (!phone || !isValidOtp(req.body?.otp)) {
+      return res.status(400).json({ message: genericAuthFailure })
+    }
+    const otpClaim = await verifyAndClaimOtp(req, phone)
+    if (otpClaim !== 'claimed') {
+      if (otpClaim === 'unavailable') return res.status(500).json({ message: genericAuthFailure })
+      return res.status(401).json({ message: genericAuthFailure })
     }
 
     try {
@@ -170,12 +293,10 @@ export const createPhoneOtpHandlers = ({
       }
 
       const user = identity?.user
-      if (!user?.isActive || user.role !== 'CUSTOMER' || user.storeId !== req.store.id) {
-        return res.status(401).json({ message: genericAuthFailure })
-      }
-      return res.status(200).json({ user: sessionIssuer(user, res), message: 'Login successful' })
-    } catch (error) {
-      logFailure('phone_otp_login_failure', error)
+      if (!isEligiblePhoneCustomer(user, req.store.id)) return res.status(401).json({ message: genericAuthFailure })
+      const sanitizedUser = sessionIssuer(user, res)
+      return res.status(200).json({ user: sanitizedUser, message: 'Login successful' })
+    } catch {
       return res.status(500).json({ message: genericAuthFailure })
     }
   }
@@ -190,9 +311,11 @@ export const createPhoneOtpHandlers = ({
     setNoStore(res)
     if (!isHastonCustomer(req)) return res.status(403).json({ message: genericAuthFailure })
     const phone = getPhone(req)
-    const claim = await verifyOtp(req, phone)
-    if (claim !== 'claimed') {
-      return res.status(claim === 'unavailable' ? 500 : 401).json({ message: genericAuthFailure })
+    if (!phone || !isValidOtp(req.body?.otp)) return res.status(400).json({ message: genericAuthFailure })
+    const otpClaim = await verifyAndClaimOtp(req, phone)
+    if (otpClaim !== 'claimed') {
+      if (otpClaim === 'unavailable') return res.status(500).json({ message: genericAuthFailure })
+      return res.status(401).json({ message: genericAuthFailure })
     }
 
     try {
@@ -216,7 +339,6 @@ export const createPhoneOtpHandlers = ({
       if (isUniqueConflict(error) || ['PHONE_ALREADY_LINKED', 'ACCOUNT_PHONE_ALREADY_LINKED'].includes(error?.message)) {
         return res.status(409).json({ message: genericAuthFailure })
       }
-      logFailure('phone_otp_link_failure', error)
       return res.status(500).json({ message: genericAuthFailure })
     }
   }

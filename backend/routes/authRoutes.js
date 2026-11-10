@@ -6,8 +6,6 @@ import { protect } from '../middleware/authMiddleware.js'
 import { normalizeIndianPhone } from '../services/indianPhoneNumber.js'
 import { phoneOtpControls } from '../services/phoneOtpControls.js'
 
-const router = express.Router()
-
 const normalizedEmailKey = (req) => {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : 'unknown-email'
   return email
@@ -68,8 +66,6 @@ export const protectPhoneOtpRequest = (req, res, next) => {
   return next()
 }
 
-export const createAuthRouter = () => router
-
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 8,
@@ -103,34 +99,41 @@ const googleLoginLimiter = rateLimit({
 
 const googleLoginUser = createGoogleLoginHandler()
 
-const phoneOtpLimiter = (kind) => (req, res, next) => {
-  const phone = normalizeIndianPhone(req.body?.phone)
-  const ip = ipKeyGenerator(req.ip)
-  const allowed = kind === 'send'
-    ? phoneOtpControls.allowSend(ip, phone)
-    : phoneOtpControls.allowVerify(ip, phone)
-  if (!allowed) return generic429(req, res)
-  return next()
+export const createAuthRouter = ({ otpHandlers = phoneOtpHandlers, otpControls = phoneOtpControls } = {}) => {
+  const router = express.Router()
+  const phoneOtpLimiter = (kind) => (req, res, next) => {
+    const phone = normalizeIndianPhone(req.body?.phone)
+    const ip = ipKeyGenerator(req.ip)
+    const allowed = kind === 'send'
+      ? otpControls.allowSend(ip, phone)
+      : otpControls.allowVerify(ip, phone)
+    if (!allowed) return generic429(req, res)
+    return next()
+  }
+
+  const phoneOtpSendLimiter = phoneOtpLimiter('send')
+  const phoneOtpVerifyLimiter = phoneOtpLimiter('verify')
+
+  router.post('/register', registerLimiter, registerUser)
+  router.post('/login', loginLimiter, loginUser)
+  router.get('/csrf', (req, res) => res.set('Cache-Control', 'no-store').status(204).end())
+  router.get('/google/nonce', protectGoogleLoginRequest, googleLoginNonce)
+  router.post('/google', googleLoginLimiter, protectGoogleLoginRequest, googleLoginUser)
+  router.post('/phone/register/send', protectPhoneOtpRequest, phoneOtpSendLimiter, otpHandlers.sendOtp)
+  router.post('/phone/register/verify', protectPhoneOtpRequest, phoneOtpVerifyLimiter, otpHandlers.registerVerify)
+  router.post('/phone/register', protectPhoneOtpRequest, phoneOtpVerifyLimiter, otpHandlers.registerVerify)
+  router.post('/phone/login/send', protectPhoneOtpRequest, phoneOtpSendLimiter, otpHandlers.sendOtp)
+  router.post('/phone/login/verify', protectPhoneOtpRequest, phoneOtpVerifyLimiter, otpHandlers.loginVerify)
+  router.post('/phone/send-otp', protectPhoneOtpRequest, phoneOtpSendLimiter, otpHandlers.sendOtp)
+  router.post('/phone/login', protectPhoneOtpRequest, phoneOtpVerifyLimiter, otpHandlers.loginVerify)
+  router.post('/phone/link/send', protect, protectPhoneOtpRequest, phoneOtpSendLimiter, otpHandlers.linkSend)
+  router.post('/phone/link/verify', protect, protectPhoneOtpRequest, phoneOtpVerifyLimiter, otpHandlers.linkVerify)
+  router.post('/logout', protect, logoutUser)
+  router.get('/profile', protect, getProfile)
+
+  return router
 }
 
-const phoneOtpSendLimiter = phoneOtpLimiter('send')
-const phoneOtpVerifyLimiter = phoneOtpLimiter('verify')
-
-router.post('/register', registerLimiter, registerUser)
-router.post('/login', loginLimiter, loginUser)
-router.get('/csrf', (req, res) => res.set('Cache-Control', 'no-store').status(204).end())
-router.get('/google/nonce', protectGoogleLoginRequest, googleLoginNonce)
-router.post('/google', googleLoginLimiter, protectGoogleLoginRequest, googleLoginUser)
-router.post('/phone/register/send', protectPhoneOtpRequest, phoneOtpSendLimiter, phoneOtpHandlers.sendOtp)
-router.post('/phone/register/verify', protectPhoneOtpRequest, phoneOtpVerifyLimiter, phoneOtpHandlers.registerVerify)
-router.post('/phone/register', protectPhoneOtpRequest, phoneOtpVerifyLimiter, phoneOtpHandlers.registerVerify)
-router.post('/phone/login/send', protectPhoneOtpRequest, phoneOtpSendLimiter, phoneOtpHandlers.sendOtp)
-router.post('/phone/login/verify', protectPhoneOtpRequest, phoneOtpVerifyLimiter, phoneOtpHandlers.loginVerify)
-router.post('/phone/send-otp', protectPhoneOtpRequest, phoneOtpSendLimiter, phoneOtpHandlers.sendOtp)
-router.post('/phone/login', protectPhoneOtpRequest, phoneOtpVerifyLimiter, phoneOtpHandlers.loginVerify)
-router.post('/phone/link/send', protect, protectPhoneOtpRequest, phoneOtpSendLimiter, phoneOtpHandlers.linkSend)
-router.post('/phone/link/verify', protect, protectPhoneOtpRequest, phoneOtpVerifyLimiter, phoneOtpHandlers.linkVerify)
-router.post('/logout', protect, logoutUser)
-router.get('/profile', protect, getProfile)
+const router = createAuthRouter()
 
 export default router

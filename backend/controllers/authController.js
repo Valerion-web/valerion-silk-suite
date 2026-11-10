@@ -28,7 +28,7 @@ const createToken = (user) => {
     return jwt.sign({ id: user.id, email: user.email, role: user.role }, secret, {
       expiresIn: getJwtExpiresIn(),
     })
-  } catch (error) {
+  } catch {
     throw new Error('Authentication failed')
   }
 }
@@ -54,8 +54,7 @@ const setAuthCookie = (res, token) => {
   })
 }
 
-export const issueAuthSession = (user, res) => {
-  const token = createToken(user)
+export const issueAuthSession = (user, res, token = createToken(user)) => {
   setAuthCookie(res, token)
   return sanitizeUser(user)
 }
@@ -234,16 +233,15 @@ export const createLoginUserHandler = ({ prismaClient = prisma } = {}) => async 
       throw new Error('Authentication failed')
     }
 
-    let token
+    let sanitizedUser
     try {
-      token = createToken(user)
+      sanitizedUser = issueAuthSession(user, res)
     } catch (tokenErr) {
       res.status(500)
       throw new Error('Authentication failed')
     }
 
-    setAuthCookie(res, token)
-    res.status(200).json({ user: sanitizeUser(user), message: 'Login successful' })
+    res.status(200).json({ user: sanitizedUser, message: 'Login successful' })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error'
     if (!res.headersSent) {
@@ -295,8 +293,7 @@ const completeGoogleLogin = (user, res, nonce, nonceStore) => {
     return res.status(401).json({ message: 'Google authentication failed' })
   }
   clearGoogleNonceCookie(res)
-  setAuthCookie(res, token)
-  return res.status(200).json({ user: sanitizeUser(user), message: 'Login successful' })
+  return res.status(200).json({ user: issueAuthSession(user, res, token), message: 'Login successful' })
 }
 
 export const createGoogleLoginHandler = ({ prismaClient = prisma, verifyCredential = verifyGoogleIdToken, nonceStore = googleNonceStore } = {}) => async (req, res) => {
@@ -319,7 +316,20 @@ export const createGoogleLoginHandler = ({ prismaClient = prisma, verifyCredenti
   let payload
   try {
     payload = await verifyCredential(credential, clientId)
-  } catch {
+  } catch (error) {
+    const safeMessage = String(error?.message ?? '')
+      .replaceAll(credential, '[REDACTED]')
+      .replaceAll(nonce, '[REDACTED]')
+      .replaceAll(clientId, '[REDACTED]')
+      .replace(/[\r\n\t]/g, ' ')
+
+    console.warn(
+      'GOOGLE_VERIFY_ERROR:',
+      String(error?.name ?? 'unknown'),
+      String(error?.code ?? 'unknown'),
+      safeMessage
+    )
+
     return res.status(401).json({ message: 'Google authentication failed' })
   }
 
