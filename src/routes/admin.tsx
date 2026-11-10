@@ -8,6 +8,7 @@ import PremiumDashboardPage from "@/components/admin/PremiumDashboard";
 import AdminLayout from "@/components/admin/AdminLayout";
 import InventoryDashboard from "@/components/admin/inventory/InventoryDashboard";
 import InventoryModule from "@/components/admin/inventory/InventoryModule";
+import ShipmentManagementPanel from "@/components/admin/ShipmentManagementPanel";
 import {
   BrandsPage as BrandsModulePage,
   ProductDetailsPage as ProductDetailsModulePage,
@@ -104,6 +105,20 @@ type OrderRecord = {
     note?: string | null;
     changedBy?: { id?: number; name?: string; email?: string } | null;
   }>;
+  shipment?: {
+    id?: number;
+    status?: string;
+    attemptCount?: number;
+    shiprocketOrderId?: string | null;
+    shiprocketShipmentId?: string | null;
+    packageWeightKg?: string | number | null;
+    packageLengthCm?: string | number | null;
+    packageBreadthCm?: string | number | null;
+    packageHeightCm?: string | number | null;
+    packageConfirmedAt?: string | null;
+    packageConfirmedById?: number | null;
+    packageConfirmedBy?: { id: number; name?: string | null } | null;
+  } | null;
 };
 
 type CategoryRecord = {
@@ -132,7 +147,7 @@ type CategoryRecord = {
 type UserRecord = {
   id: number;
   name?: string;
-  email?: string;
+  email?: string | null;
   role?: string;
   createdAt?: string;
   status?: string;
@@ -1801,7 +1816,7 @@ function OrdersPage() {
                 <div>
                   <p className="text-sm font-semibold text-[#041E42]">Customer</p>
                   <p className="mt-1 text-sm text-[#4B5563]">{selectedOrder.user?.name || "Guest"}</p>
-                  <p className="text-sm text-[#4B5563]">{selectedOrder.user?.email}</p>
+                  <p className="text-sm text-[#4B5563]">{selectedOrder.user?.email ?? "Phone-only account"}</p>
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-[#041E42]">Ordered on</p>
@@ -2845,7 +2860,7 @@ function UsersPage() {
                 {filtered.map((user) => (
                   <tr key={user.id} className="border-b border-[#F3F4F6] hover:bg-[#FAFAFA]">
                     <td className="py-3 pr-4 font-medium text-[#111111]">{user.name || `User ${user.id}`}</td>
-                    <td className="py-3 pr-4 text-[#4B5563]">{user.email}</td>
+                    <td className="py-3 pr-4 text-[#4B5563]">{user.email ?? "Phone-only account"}</td>
                     <td className="py-3 pr-4 text-[#4B5563]">{user.orders ?? 0} / {withCurrency(user.totalSpend ?? 0)}</td>
                     <td className="py-3 pr-4 text-[#4B5563]">{user.role || "CUSTOMER"}</td>
                     <td className="py-3 pr-4 text-[#4B5563]">{formatDate(user.createdAt)}</td>
@@ -2901,7 +2916,7 @@ function UsersPage() {
           <div className="mt-5 grid gap-4 md:grid-cols-3">
             <div>
               <p className="text-sm font-semibold text-[#041E42]">Email</p>
-              <p className="mt-1 text-sm text-[#4B5563]">{selected.email}</p>
+              <p className="mt-1 text-sm text-[#4B5563]">{selected.email ?? "Phone-only account"}</p>
             </div>
             <div>
               <p className="text-sm font-semibold text-[#041E42]">Role</p>
@@ -3620,6 +3635,13 @@ function OrderDetailsPage() {
           </div>
         </div>
       </section>
+      {!isParentContext && order.shipment?.id && (
+        <ShipmentManagementPanel
+          shipmentId={order.shipment.id}
+          orderId={order.id}
+          initialPackage={order.shipment}
+        />
+      )}
     </div>
   );
 }

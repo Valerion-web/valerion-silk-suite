@@ -6,7 +6,7 @@ import { apiFetch } from "@/lib/api";
 export type User = {
   id: number;
   name: string;
-  email: string;
+  email: string | null;
   role: string;
   phone?: string;
   avatar?: string;
@@ -32,12 +32,77 @@ type AuthCtx = {
   isLoggingOut: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (name: string, email: string, password: string) => Promise<void>;
+  requestPhoneOtp: (phone: string, purpose: "login" | "register" | "link") => Promise<void>;
+  signInWithPhone: (phone: string, otp: string) => Promise<void>;
+  signUpWithPhone: (details: { name: string; email: string; password: string; phone: string; otp: string }) => Promise<void>;
+  linkPhone: (phone: string, otp: string) => Promise<void>;
   signOut: () => Promise<void>;
   updateUser: (patch: Partial<User>) => void;
 };
 
 const Ctx = createContext<AuthCtx | null>(null);
 const USER_KEY = "valerion.user";
+
+const readCsrfCookie = () => {
+  const cookie = document.cookie
+    .split(";")
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith("csrf_token="));
+  if (!cookie) return null;
+  try {
+    return decodeURIComponent(cookie.slice("csrf_token=".length));
+  } catch {
+    return cookie.slice("csrf_token=".length);
+  }
+};
+
+const getCsrfToken = async () => {
+  let token = readCsrfCookie();
+  if (!token) {
+    const response = await apiFetch("/api/auth/csrf");
+    if (!response.ok) throw new Error("Unable to prepare phone authentication");
+    token = readCsrfCookie();
+  }
+  if (!token) throw new Error("Unable to prepare phone authentication");
+  return token;
+};
+
+const phoneAuthFetch = async (path: string, body: Record<string, string>) => {
+  const csrfToken = await getCsrfToken();
+  const response = await apiFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  let data: unknown = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error("Unable to process phone authentication response");
+    }
+  }
+  if (!response.ok) {
+    const message = data && typeof data === "object" && "message" in data && typeof data.message === "string"
+      ? data.message
+      : "Phone authentication failed";
+    throw new Error(message);
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("Unable to process phone authentication response");
+  }
+  return data as Record<string, unknown>;
+};
+
+const isUser = (value: unknown): value is User => {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.id === "number" &&
+    typeof candidate.name === "string" &&
+    (candidate.email === null || typeof candidate.email === "string") &&
+    typeof candidate.role === "string";
+};
 
 const getDevAdminCredentials = () => ({
   email: import.meta.env.VITE_DEV_ADMIN_EMAIL,
@@ -216,19 +281,79 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, email, password }),
       });
-      setUser(data.user);
-      setToken(data.token);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(USER_KEY, JSON.stringify(data.user));
-        window.localStorage.setItem(TOKEN_KEY, data.token);
+      if (isUser(data.user)) {
+        setUser(data.user);
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+        }
       }
-      toast.success("Account created", {
-        description: `Welcome, ${data.user.name}`,
+      toast.success("Account request submitted", {
+        description: data.message || "If the details are eligible, the account request was processed.",
         className: "luxury-toast",
       });
       return data
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to create account";
+      toast.error(message, { className: "luxury-toast" });
+      throw error;
+    }
+  }, []);
+
+  const requestPhoneOtp = useCallback(async (phone: string, purpose: "login" | "register" | "link") => {
+    const path = purpose === "link" ? "/api/auth/phone/link/send" : `/api/auth/phone/${purpose}/send`;
+    try {
+      await phoneAuthFetch(path, { phone });
+      toast.success("Verification code sent", { className: "luxury-toast" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to send verification code";
+      toast.error(message, { className: "luxury-toast" });
+      throw error;
+    }
+  }, []);
+
+  const signInWithPhone = useCallback(async (phone: string, otp: string) => {
+    try {
+      const data = await phoneAuthFetch("/api/auth/phone/login/verify", { phone, otp });
+      if (!isUser(data.user)) throw new Error("Unable to process phone authentication response");
+      setUser(data.user);
+      if (typeof window !== "undefined") window.localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+      toast.success("Signed in successfully", {
+        description: `Welcome back, ${data.user.name}`,
+        className: "luxury-toast",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to sign in";
+      toast.error(message, { className: "luxury-toast" });
+      throw error;
+    }
+  }, []);
+
+  const signUpWithPhone = useCallback(async ({ name, email, password, phone, otp }: {
+    name: string;
+    email: string;
+    password: string;
+    phone: string;
+    otp: string;
+  }) => {
+    try {
+      const data = await phoneAuthFetch("/api/auth/phone/register/verify", { name, email, password, phone, otp });
+      if (!isUser(data.user)) throw new Error("Unable to process phone authentication response");
+      setUser(data.user);
+      if (typeof window !== "undefined") window.localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+      toast.success("Account created", { description: `Welcome, ${data.user.name}`, className: "luxury-toast" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to create account";
+      toast.error(message, { className: "luxury-toast" });
+      throw error;
+    }
+  }, []);
+
+  const linkPhone = useCallback(async (phone: string, otp: string) => {
+    try {
+      await phoneAuthFetch("/api/auth/phone/link/verify", { phone, otp });
+      toast.success("Phone linked successfully", { className: "luxury-toast" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to link phone";
       toast.error(message, { className: "luxury-toast" });
       throw error;
     }
@@ -260,8 +385,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, hydrated, isLoggingOut: isLoggingOutRef.current, signIn, signUp, signOut, updateUser }),
-    [user, hydrated, signIn, signUp, signOut, updateUser]
+    () => ({
+      user,
+      hydrated,
+      isLoggingOut: isLoggingOutRef.current,
+      signIn,
+      signUp,
+      requestPhoneOtp,
+      signInWithPhone,
+      signUpWithPhone,
+      linkPhone,
+      signOut,
+      updateUser,
+    }),
+    [user, hydrated, signIn, signUp, requestPhoneOtp, signInWithPhone, signUpWithPhone, linkPhone, signOut, updateUser]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

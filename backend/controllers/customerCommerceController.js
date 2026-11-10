@@ -1,5 +1,7 @@
 import crypto from 'node:crypto'
 import prisma from '../lib/prisma.js'
+import { createOrderTrackingHandler } from '../services/customerOrderTracking.js'
+import { queueShipment } from '../services/shipmentQueue.js'
 
 const productInclude = {
   category: true,
@@ -103,6 +105,94 @@ const getValidatedLineItems = async (tx, req) => {
   return cart
 }
 
+const normalizeCheckoutString = (value) => typeof value === 'string' ? value.trim() : ''
+
+const checkoutError = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode })
+
+const normalizeCodAddress = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw checkoutError('A valid shipping address is required')
+  }
+  const name = normalizeCheckoutString(value.name)
+  const line1 = normalizeCheckoutString(value.line1 ?? value.address)
+  const line2 = normalizeCheckoutString(value.line2 ?? value.apartment)
+  const city = normalizeCheckoutString(value.city)
+  const state = normalizeCheckoutString(value.state)
+  const postalCode = normalizeCheckoutString(value.postalCode ?? value.pincode)
+  const country = normalizeCheckoutString(value.country)
+  const phone = normalizeCheckoutString(value.phone ?? value.mobile)
+  const email = normalizeCheckoutString(value.email)
+  const phoneDigits = phone.replace(/\D/g, '')
+  if (!name || name.length > 120 || !line1 || line1.length > 250
+    || line2.length > 250 || !city || city.length > 100 || !state || state.length > 100
+    || !/^[\p{L}\p{N} -]{4,12}$/u.test(postalCode) || !country || country.length > 80
+    || phoneDigits.length < 10 || phoneDigits.length > 15
+    || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw checkoutError('Enter valid shipping contact and address details')
+  }
+  return { name, line1, line2: line2 || null, city, state, postalCode, country, phone, email }
+}
+
+const normalizedChoice = (value) => normalizeCheckoutString(value).toLowerCase()
+
+const resolveCodCheckoutItems = async (tx, req, rawItems) => {
+  if (!Array.isArray(rawItems) || rawItems.length < 1 || rawItems.length > 100) {
+    throw checkoutError('A valid checkout cart is required')
+  }
+  const requested = rawItems.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw checkoutError('A checkout item is invalid')
+    const slug = normalizeCheckoutString(item.slug)
+    const size = normalizeCheckoutString(item.size)
+    const color = normalizeCheckoutString(item.color)
+    const quantity = Number(item.quantity)
+    if (!slug || slug.length > 160 || !Number.isInteger(quantity) || quantity < 1 || quantity > 100
+      || size.length > 80 || color.length > 80) {
+      throw checkoutError('A checkout item is invalid')
+    }
+    return { slug, size, color, quantity }
+  })
+  const products = await tx.product.findMany({
+    where: { storeId: req.store.id, status: 'ACTIVE', slug: { in: [...new Set(requested.map((item) => item.slug))] } },
+    include: { variants: true },
+  })
+  const productBySlug = new Map(products.map((product) => [product.slug, product]))
+  const seenSelections = new Set()
+  return requested.map((selection, index) => {
+    const product = productBySlug.get(selection.slug)
+    if (!product) throw checkoutError('A selected product is unavailable', 409)
+    const activeVariants = (product.variants || []).filter((variant) => variant.status === 'ACTIVE')
+    let variant = null
+    if (activeVariants.length) {
+      const requestedSize = normalizedChoice(selection.size)
+      const requestedColor = normalizedChoice(selection.color)
+      const matches = activeVariants.filter((candidate) => (
+        normalizedChoice(candidate.size) === requestedSize
+        && [candidate.color, candidate.colorCode].some((value) => normalizedChoice(value) === requestedColor)
+      ))
+      if (matches.length !== 1) throw checkoutError('A selected product option is unavailable', 409)
+      variant = matches[0]
+    } else if (selection.size || selection.color) {
+      throw checkoutError('This product option is not configured for ordering', 409)
+    }
+    const selectionKey = `${product.id}:${variant?.id ?? 'none'}`
+    if (seenSelections.has(selectionKey)) throw checkoutError('Duplicate product options are not allowed')
+    seenSelections.add(selectionKey)
+    if (!normalizeCheckoutString(variant?.sku || product.sku)) {
+      throw checkoutError('A selected product is not ready for shipment', 409)
+    }
+    const item = {
+      id: index + 1,
+      productId: product.id,
+      variantId: variant?.id ?? null,
+      quantity: selection.quantity,
+      product,
+      variant,
+    }
+    if (stockFor(item) < item.quantity) throw checkoutError('A selected product quantity is unavailable', 409)
+    return item
+  })
+}
+
 const normalizeCouponCode = (value) => String(value ?? '').trim().toUpperCase()
 
 const parseCouponNumeric = (value, fallback = null) => {
@@ -145,8 +235,7 @@ const resolveRestrictedCartSubtotal = (cart, coupon) => {
   return { eligibleSubtotal, matches: eligibleSubtotal > 0 }
 }
 
-export const calculateTotals = async (tx, req, couponCode) => {
-  const cart = await getValidatedLineItems(tx, req)
+const calculateTotalsForCart = async (tx, req, cart, couponCode) => {
   const subtotal = cart.items.reduce((sum, item) => sum + priceFor(item) * item.quantity, 0)
   let discount = 0
   let coupon = null
@@ -224,6 +313,10 @@ export const calculateTotals = async (tx, req, couponCode) => {
     shippingCost: shipping,
   }
 }
+
+export const calculateTotals = async (tx, req, couponCode) => (
+  calculateTotalsForCart(tx, req, await getValidatedLineItems(tx, req), couponCode)
+)
 
 const paymentCheckoutLineFor = (item) => {
   const unitPrice = priceFor(item)
@@ -441,6 +534,167 @@ export const validateCheckout = async (req, res, next) => {
   }
 }
 
+export const getCouponSuggestions = async (req, res, next) => {
+  try {
+    try {
+      await getValidatedLineItems(prisma, req)
+    } catch (error) {
+      if (error.message === 'Cart is empty') return res.json([])
+      throw error
+    }
+
+    const candidates = await prisma.coupon.findMany({
+      where: { storeId: req.store.id, active: true },
+      select: { code: true },
+    })
+    const suggestions = []
+    const seenCodes = new Set()
+
+    for (const candidate of candidates) {
+      const code = normalizeCouponCode(candidate.code)
+      if (!code || seenCodes.has(code)) continue
+      seenCodes.add(code)
+
+      let totals
+      try {
+        totals = await calculateTotals(prisma, req, code)
+      } catch (error) {
+        if (error.statusCode === 400 && error.message === 'Coupon is invalid or not applicable') continue
+        throw error
+      }
+
+      const coupon = totals.coupon
+      if (!coupon) continue
+      const suggestion = {
+        code: coupon.code,
+        discountType: coupon.discountType,
+        value: Number(coupon.value),
+        minOrderValue: coupon.minOrderValue == null ? null : Number(coupon.minOrderValue),
+        allowFreeShipping: Boolean(coupon.allowFreeShipping),
+        startsAt: coupon.startsAt ? coupon.startsAt.toISOString() : null,
+        endsAt: coupon.endsAt ? coupon.endsAt.toISOString() : null,
+        message: 'Eligible for your current cart',
+      }
+      if (coupon.discountType === 'PERCENTAGE') {
+        suggestion.maxDiscount = parseCouponNumeric(coupon.maxDiscount, null)
+      }
+
+      suggestions.push(suggestion)
+      if (suggestions.length >= 10) break
+    }
+
+    res.json(suggestions)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const getAddresses = async (req, res, next) => {
+  try {
+    const addresses = await prisma.address.findMany({
+      where: { userId: req.user.id },
+      orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
+    })
+    res.json(addresses)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const createAddress = async (req, res, next) => {
+  try {
+    const body = req.body
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      res.status(400)
+      throw new Error('Address details are required')
+    }
+
+    const requiredFields = ['name', 'label', 'line1', 'city', 'state', 'postalCode', 'country']
+    const addressData = {}
+    for (const field of requiredFields) {
+      if (typeof body[field] !== 'string' || !body[field].trim()) {
+        res.status(400)
+        throw new Error(`${field} is required`)
+      }
+      addressData[field] = body[field].trim()
+    }
+
+    for (const field of ['line2', 'phone']) {
+      if (body[field] !== undefined && body[field] !== null && typeof body[field] !== 'string') {
+        res.status(400)
+        throw new Error(`${field} must be a string`)
+      }
+      addressData[field] = typeof body[field] === 'string' ? body[field].trim() || null : null
+    }
+
+    if (body.isDefault !== undefined && typeof body.isDefault !== 'boolean') {
+      res.status(400)
+      throw new Error('isDefault must be a boolean')
+    }
+
+    const address = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${req.user.id} FOR UPDATE`
+
+      const existingCount = await tx.address.count({ where: { userId: req.user.id } })
+      const isDefault = body.isDefault === true || existingCount === 0
+      if (isDefault) {
+        await tx.address.updateMany({
+          where: { userId: req.user.id },
+          data: { isDefault: false },
+        })
+      }
+
+      return tx.address.create({
+        data: {
+          ...addressData,
+          userId: req.user.id,
+          isDefault,
+        },
+      })
+    })
+
+    res.status(201).json(address)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const setAddressDefault = async (req, res, next) => {
+  try {
+    const addressId = Number(req.params.id)
+    if (!Number.isSafeInteger(addressId) || addressId < 1) {
+      res.status(400)
+      throw new Error('A valid address id is required')
+    }
+
+    const address = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${req.user.id} FOR UPDATE`
+      const ownedAddress = await tx.address.findFirst({
+        where: { id: addressId, userId: req.user.id },
+        select: { id: true },
+      })
+      if (!ownedAddress) return null
+
+      await tx.address.updateMany({
+        where: { userId: req.user.id },
+        data: { isDefault: false },
+      })
+      return tx.address.update({
+        where: { id: addressId },
+        data: { isDefault: true },
+      })
+    })
+
+    if (!address) {
+      res.status(404)
+      throw new Error('Address not found')
+    }
+    res.json(address)
+  } catch (error) {
+    next(error)
+  }
+}
+
 const idempotencyKeyFor = (req) => {
   const bodyKey = typeof req.body?.idempotencyKey === 'string' ? req.body.idempotencyKey.trim() : ''
   const headerKey = typeof req.get('Idempotency-Key') === 'string' ? req.get('Idempotency-Key').trim() : ''
@@ -448,6 +702,286 @@ const idempotencyKeyFor = (req) => {
 }
 
 const fingerprintFor = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
+
+const canonicalizeFingerprintValue = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalizeFingerprintValue)
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalizeFingerprintValue(value[key])]))
+  }
+  return value
+}
+
+const orderRequestFingerprintFor = (req) => {
+  const body = req.body || {}
+  const shippingAddress = Object.hasOwn(body, 'shippingAddress') ? body.shippingAddress : {}
+  const billingAddress = Object.hasOwn(body, 'billingAddress') ? body.billingAddress : shippingAddress
+  const normalizedCouponCode = normalizeCouponCode(body.couponCode)
+  return fingerprintFor(canonicalizeFingerprintValue({
+    shippingAddress,
+    billingAddress,
+    couponCode: normalizedCouponCode || null,
+  }))
+}
+
+const legacyOrderRequestFingerprintFor = (req) => {
+  const shippingAddress = JSON.stringify(req.body?.shippingAddress || {})
+  const billingAddress = JSON.stringify(req.body?.billingAddress || req.body?.shippingAddress || {})
+  return fingerprintFor({ shippingAddress, billingAddress, couponCode: req.body?.couponCode || null })
+}
+
+const parseStoredAddress = (value, fallback) => {
+  if (typeof value !== 'string') return value === undefined || value === null ? fallback : value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+const persistedOrderRequestFingerprintFor = (order) => {
+  const shippingAddress = parseStoredAddress(order.shippingAddress, {})
+  const billingAddress = parseStoredAddress(order.billingAddress, shippingAddress)
+  const normalizedCouponCode = normalizeCouponCode(order.couponCode)
+  return fingerprintFor(canonicalizeFingerprintValue({
+    shippingAddress,
+    billingAddress,
+    couponCode: normalizedCouponCode || null,
+  }))
+}
+
+const orderRequestFingerprintFromSnapshot = (snapshot) => {
+  const shippingAddress = parseStoredAddress(snapshot.shippingAddress, {})
+  const billingAddress = parseStoredAddress(snapshot.billingAddress, shippingAddress)
+  const normalizedCouponCode = normalizeCouponCode(snapshot.coupon?.code)
+  return fingerprintFor(canonicalizeFingerprintValue({
+    shippingAddress,
+    billingAddress,
+    couponCode: normalizedCouponCode || null,
+  }))
+}
+
+const orderRequestFingerprintMatches = (order, req) => {
+  if (!order.requestFingerprint) return true
+  const currentFingerprint = orderRequestFingerprintFor(req)
+  return order.requestFingerprint === currentFingerprint
+    || order.requestFingerprint === legacyOrderRequestFingerprintFor(req)
+    || persistedOrderRequestFingerprintFor(order) === currentFingerprint
+}
+
+const idempotencyConflictError = () => Object.assign(new Error('Idempotency key was reused for a different order request'), { statusCode: 409 })
+
+const COD_MAX_TOTAL_CENTS = 5_000_000
+
+const codRequestFingerprint = ({ items, shippingAddress, billingAddress, couponCode }) => {
+  const normalizedItems = items.map((item) => ({
+    slug: item.slug.trim().toLowerCase(),
+    size: item.size.trim().toLowerCase(),
+    color: item.color.trim().toLowerCase(),
+    quantity: item.quantity,
+  })).sort((left, right) => (
+    left.slug.localeCompare(right.slug)
+    || left.size.localeCompare(right.size)
+    || left.color.localeCompare(right.color)
+    || left.quantity - right.quantity
+  ))
+  return fingerprintFor({
+    items: normalizedItems,
+    shippingAddress,
+    billingAddress,
+    couponCode: normalizeCouponCode(couponCode),
+  })
+}
+
+const codAmountInCents = (amount) => {
+  const cents = Math.round(Number(amount) * 100)
+  if (!Number.isSafeInteger(cents) || cents <= 0) {
+    throw checkoutError('The COD collection amount is invalid')
+  }
+  return cents
+}
+
+export const lockCustomerCheckout = async (tx, req) => {
+  // Both checkout providers take this row lock inside Serializable transactions.
+  await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${req.user.id} FOR UPDATE`
+}
+
+export const assertNoUnresolvedCheckoutPayment = async (tx, req, exceptPaymentId = null) => {
+  const payment = await tx.payment.findFirst({
+    where: {
+      userId: req.user.id,
+      storeId: req.store.id,
+      ...(exceptPaymentId === null ? {} : { id: { not: exceptPaymentId } }),
+      OR: [
+        { provider: 'COD', status: 'PENDING_COLLECTION' },
+        { provider: 'RAZORPAY', orderId: null, status: { in: ['CREATED', 'AUTHORIZED', 'CAPTURED'] } },
+      ],
+    },
+    select: { id: true, provider: true, status: true },
+  })
+  if (payment) {
+    throw checkoutError('A previous payment attempt is unresolved; complete or resolve it before starting another checkout', 409)
+  }
+}
+
+const findExistingCodPayment = async (tx, req, idempotencyKey, fingerprint) => {
+  const payments = await tx.payment.findMany({
+    where: { userId: req.user.id, storeId: req.store.id, idempotencyKey },
+    include: { order: { select: { id: true } } },
+  })
+  if (payments.length > 1) throw checkoutError('This checkout key is already associated with another payment', 409)
+  const payment = payments[0]
+  if (!payment) return null
+  if (payment.provider !== 'COD'
+    || payment.status !== 'PENDING_COLLECTION'
+    || payment.checkoutSnapshot?.type !== 'COD'
+    || payment.checkoutSnapshot?.requestFingerprint !== fingerprint
+    || !payment.orderId) {
+    throw checkoutError('This checkout key is already associated with a different payment request', 409)
+  }
+  return { orderId: payment.orderId, paymentStatus: payment.status, amount: payment.amount }
+}
+
+const codEligibilityFor = async (tx, req) => {
+  const items = await resolveCodCheckoutItems(tx, req, req.body?.items)
+  const cart = { id: null, items }
+  const totals = await calculateTotalsForCart(tx, req, cart, req.body?.couponCode)
+  const totalCents = codAmountInCents(totals.total)
+  return {
+    eligible: totalCents < COD_MAX_TOTAL_CENTS,
+    reason: totalCents < COD_MAX_TOTAL_CENTS ? null : 'COD is available only for orders below ₹50,000',
+    subtotal: totals.subtotal,
+    discount: totals.discount,
+    shipping: totals.shipping,
+    total: totals.total,
+    currency: 'INR',
+    items: items.map((item) => ({
+      slug: item.product.slug,
+      name: item.product.name,
+      quantity: item.quantity,
+      unitPrice: priceFor(item),
+      lineTotal: priceFor(item) * item.quantity,
+    })),
+  }
+}
+
+export const getCodEligibility = async (req, res, next) => {
+  try {
+    const result = await prisma.$transaction((tx) => codEligibilityFor(tx, req))
+    res.json(result)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const createCodOrder = async (req, res, next) => {
+  const idempotencyKey = idempotencyKeyFor(req)
+  let fingerprint
+  try {
+    if (!idempotencyKey || !/^[A-Za-z0-9._:-]{1,128}$/.test(idempotencyKey)) {
+      throw checkoutError('A valid checkout idempotency key is required')
+    }
+    const shippingAddress = normalizeCodAddress(req.body?.shippingAddress)
+    const billingAddress = normalizeCodAddress(req.body?.billingAddress ?? req.body?.shippingAddress)
+    const items = Array.isArray(req.body?.items) ? req.body.items : []
+    fingerprint = codRequestFingerprint({
+      items: items.map((item) => ({
+        slug: normalizeCheckoutString(item?.slug),
+        size: normalizeCheckoutString(item?.size),
+        color: normalizeCheckoutString(item?.color),
+        quantity: Number(item?.quantity),
+      })),
+      shippingAddress,
+      billingAddress,
+      couponCode: req.body?.couponCode,
+    })
+    const result = await prisma.$transaction(async (tx) => {
+      await lockCustomerCheckout(tx, req)
+      const existingPayment = await findExistingCodPayment(tx, req, idempotencyKey, fingerprint)
+      if (existingPayment) return { ...existingPayment, created: false }
+      await assertNoUnresolvedCheckoutPayment(tx, req)
+      const existingOrder = await tx.order.findUnique({
+        where: { userId_storeId_idempotencyKey: { userId: req.user.id, storeId: req.store.id, idempotencyKey } },
+        select: { id: true },
+      })
+      if (existingOrder) throw checkoutError('This checkout key is already associated with another order', 409)
+
+      const resolvedItems = await resolveCodCheckoutItems(tx, req, items)
+      const cart = await ensureCart(tx, req)
+      await tx.cartItem.deleteMany({ where: { cartId: cart.id } })
+      await tx.cartItem.createMany({
+        data: resolvedItems.map((item) => ({
+          cartId: cart.id,
+          productId: item.productId,
+          variantId: item.variantId,
+          quantity: item.quantity,
+        })),
+      })
+      const checkoutReq = {
+        ...req,
+        body: { ...req.body, shippingAddress, billingAddress },
+      }
+      const finalized = await finalizeOrderFromCart(tx, checkoutReq, {
+        idempotencyKey,
+        requireIdempotency: true,
+      })
+      if (!finalized.created) throw checkoutError('This checkout key is already associated with another order', 409)
+      const amountCents = codAmountInCents(finalized.order.totalPrice)
+      if (amountCents >= COD_MAX_TOTAL_CENTS) {
+        throw checkoutError('COD is available only for orders below ₹50,000', 400)
+      }
+      await tx.payment.create({
+        data: {
+          userId: req.user.id,
+          storeId: req.store.id,
+          orderId: finalized.order.id,
+          provider: 'COD',
+          status: 'PENDING_COLLECTION',
+          amount: finalized.order.totalPrice,
+          currency: 'INR',
+          idempotencyKey,
+          paymentAttemptKey: `cod_${idempotencyKey}`,
+          checkoutSnapshot: { version: 1, type: 'COD', requestFingerprint: fingerprint },
+        },
+      })
+      await queueShipment(tx, finalized.order.id)
+      return {
+        orderId: finalized.order.id,
+        paymentStatus: 'PENDING_COLLECTION',
+        amount: finalized.order.totalPrice,
+        created: true,
+      }
+    }, { isolationLevel: 'Serializable' })
+    res.status(result.created ? 201 : 200).json({
+      success: true,
+      orderId: result.orderId,
+      paymentStatus: result.paymentStatus,
+      amount: result.amount,
+      currency: 'INR',
+    })
+  } catch (error) {
+    if (['P2002', 'P2034'].includes(error?.code) && idempotencyKey && fingerprint) {
+      try {
+        const replay = await findExistingCodPayment(prisma, req, idempotencyKey, fingerprint)
+        if (replay) {
+          return res.status(200).json({
+            success: true,
+            orderId: replay.orderId,
+            paymentStatus: replay.paymentStatus,
+            amount: replay.amount,
+            currency: 'INR',
+          })
+        }
+      } catch (lookupError) {
+        if (lookupError?.statusCode) return res.status(lookupError.statusCode).json({ message: lookupError.message })
+      }
+      if (error.code === 'P2034') {
+        return res.status(409).json({ message: 'Checkout is being finalized. Retry with the same idempotency key.' })
+      }
+    }
+    if (error?.statusCode) return res.status(error.statusCode).json({ message: error.message })
+    next(error)
+  }
+}
 
 const totalsFromPaymentSnapshot = async (tx, req, snapshot) => {
   const invalidSnapshot = () => Object.assign(new Error('Payment checkout snapshot is invalid'), { statusCode: 409 })
@@ -529,7 +1063,12 @@ export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, re
       where: { userId_storeId_idempotencyKey: { userId: req.user.id, storeId: req.store.id, idempotencyKey } },
       include: { items: { include: { product: { include: productInclude }, variant: true } }, statusHistory: true },
     })
-    if (existingOrder) return { order: existingOrder, created: false }
+    if (existingOrder) {
+      if (!(requireIdempotency && existingOrder.status === 'AWAITING_PAYMENT') && !orderRequestFingerprintMatches(existingOrder, req)) {
+        throw idempotencyConflictError()
+      }
+      return { order: existingOrder, created: false }
+    }
   }
 
   const totals = checkoutSnapshot
@@ -537,7 +1076,9 @@ export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, re
     : await calculateTotals(tx, req, req.body?.couponCode)
   const shippingAddress = checkoutSnapshot ? checkoutSnapshot.shippingAddress : JSON.stringify(req.body?.shippingAddress || {})
   const billingAddress = checkoutSnapshot ? checkoutSnapshot.billingAddress : JSON.stringify(req.body?.billingAddress || req.body?.shippingAddress || {})
-  const requestFingerprint = checkoutSnapshot?.requestFingerprint || fingerprintFor({ shippingAddress, billingAddress, couponCode: req.body?.couponCode || null })
+  const requestFingerprint = checkoutSnapshot
+    ? orderRequestFingerprintFromSnapshot(checkoutSnapshot)
+    : orderRequestFingerprintFor(req)
   const requestContextFingerprint = checkoutSnapshot?.requestContextFingerprint || fingerprintFor({ userId: req.user.id, storeId: req.store.id, idempotencyKey })
   const order = await tx.order.create({
     data: {
@@ -556,6 +1097,18 @@ export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, re
       discountAmount: totals.discountAmount,
       subtotalBeforeDiscount: totals.subtotalBeforeDiscount,
       shippingCost: totals.shippingCost,
+      checkoutSnapshot: {
+        version: 1,
+        discountAmount: totals.discountAmount,
+        subtotalBeforeDiscount: totals.subtotalBeforeDiscount,
+        shippingCost: totals.shippingCost,
+        coupon: totals.coupon ? {
+          id: totals.coupon.id,
+          code: totals.coupon.code,
+          discountType: totals.coupon.discountType,
+          value: totals.coupon.value,
+        } : null,
+      },
       items: { create: totals.cart.items.map((item) => ({ productId: item.productId, variantId: item.variantId, quantity: item.quantity, price: item.snapshotUnitPrice ?? priceFor(item) })) },
       statusHistory: { create: { status: 'PLACED', note: 'Order placed by customer', changedById: req.user.id } },
     },
@@ -640,7 +1193,10 @@ export const createOrder = async (req, res, next) => {
   } catch (error) {
     if (error?.code === 'P2002' && idempotencyKeyFor(req)) {
       const existingOrder = await prisma.order.findUnique({ where: { userId_storeId_idempotencyKey: { userId: req.user.id, storeId: req.store.id, idempotencyKey: idempotencyKeyFor(req) } } })
-      if (existingOrder) return res.status(200).json(existingOrder)
+      if (existingOrder) {
+        if (!orderRequestFingerprintMatches(existingOrder, req)) return next(idempotencyConflictError())
+        return res.status(200).json(existingOrder)
+      }
     }
     next(error)
   }
@@ -668,15 +1224,4 @@ export const getOrder = async (req, res, next) => {
   }
 }
 
-export const getOrderTracking = async (req, res, next) => {
-  try {
-    const order = await prisma.order.findFirst({ where: { id: Number(req.params.id), userId: req.user.id, storeId: req.store.id }, select: { id: true, status: true, statusHistory: { orderBy: { createdAt: 'asc' } } } })
-    if (!order) {
-      res.status(404)
-      throw new Error('Order not found')
-    }
-    res.json(order)
-  } catch (error) {
-    next(error)
-  }
-}
+export const getOrderTracking = createOrderTrackingHandler({ prismaClient: prisma })

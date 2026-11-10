@@ -2,15 +2,18 @@ import crypto from 'node:crypto'
 import prisma from '../lib/prisma.js'
 import {
   assertPaymentCheckoutSnapshotMatchesRequest,
+  assertNoUnresolvedCheckoutPayment,
   calculateTotals,
   createPaymentCheckoutSnapshot,
   finalizeOrderFromCart,
+  lockCustomerCheckout,
 } from './customerCommerceController.js'
 import {
   createRazorpayOrder as createProviderOrder,
   findRazorpayOrderByReceipt,
   verifyRazorpaySignature,
 } from '../services/razorpayService.js'
+import { queueShipment } from '../services/shipmentQueue.js'
 
 const PAYMENT_CURRENCY = 'INR'
 
@@ -45,6 +48,52 @@ const sanitizedProviderError = (error) => {
 }
 
 const paymentConflict = (message) => Object.assign(new Error(message), { statusCode: 409 })
+
+const normalizeExpectedCart = (value) => {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw Object.assign(new Error('A non-empty expectedCart is required'), { statusCode: 400 })
+  }
+  const items = value.map((item) => {
+    if (!item || typeof item !== 'object'
+      || !Number.isSafeInteger(item.productId) || item.productId < 1
+      || !Object.prototype.hasOwnProperty.call(item, 'variantId')
+      || (item.variantId !== null && (!Number.isSafeInteger(item.variantId) || item.variantId < 1))
+      || !Number.isSafeInteger(item.quantity) || item.quantity < 1) {
+      throw Object.assign(new Error('expectedCart contains an invalid product, variant, or quantity'), { statusCode: 400 })
+    }
+    return {
+      productId: item.productId,
+      variantId: item.variantId,
+      quantity: item.quantity,
+    }
+  }).sort((left, right) => (
+    left.productId - right.productId
+    || (left.variantId ?? 0) - (right.variantId ?? 0)
+    || left.quantity - right.quantity
+  ))
+  for (let index = 1; index < items.length; index += 1) {
+    if (items[index - 1].productId === items[index].productId
+      && items[index - 1].variantId === items[index].variantId) {
+      throw Object.assign(new Error('expectedCart contains duplicate product options'), { statusCode: 400 })
+    }
+  }
+  return items
+}
+
+const assertExpectedCartMatches = (expectedCart, items) => {
+  const actual = items.map((item) => ({
+    productId: item.productId,
+    variantId: item.variantId ?? null,
+    quantity: item.quantity,
+  })).sort((left, right) => (
+    left.productId - right.productId
+    || (left.variantId ?? 0) - (right.variantId ?? 0)
+    || left.quantity - right.quantity
+  ))
+  if (JSON.stringify(actual) !== JSON.stringify(expectedCart)) {
+    throw paymentConflict('The saved cart changed after synchronization; verify it again before checkout')
+  }
+}
 
 const isTerminalPaymentStatus = (status) => ['FAILED', 'CANCELLED', 'REFUNDED'].includes(status)
 
@@ -84,19 +133,29 @@ export const createRazorpayOrder = async (req, res, next) => {
   }
 
   try {
+    const expectedCart = normalizeExpectedCart(req.body?.expectedCart)
     let attemptResult
     try {
       attemptResult = await prisma.$transaction(async (tx) => {
+        await lockCustomerCheckout(tx, req)
         const existingAttempt = await tx.payment.findUnique({
           where: { userId_storeId_paymentAttemptKey: { userId: req.user.id, storeId: req.store.id, paymentAttemptKey } },
         })
         if (existingAttempt) {
           await assertPaymentCheckoutSnapshotMatchesRequest(tx, req, existingAttempt)
+          assertExpectedCartMatches(expectedCart, existingAttempt.checkoutSnapshot?.items ?? [])
+          await assertNoUnresolvedCheckoutPayment(tx, req, existingAttempt.id)
           if (isTerminalPaymentStatus(existingAttempt.status) && !isRecoverableProviderCreationFailure(existingAttempt)) {
             throw paymentConflict('This payment attempt is terminal; use a new paymentAttemptKey')
           }
           return { payment: existingAttempt, created: false }
         }
+
+        const codPayment = await tx.payment.findFirst({
+          where: { userId: req.user.id, storeId: req.store.id, idempotencyKey, provider: 'COD' },
+          select: { id: true },
+        })
+        if (codPayment) throw paymentConflict('This checkout is already reserved for cash on delivery')
 
         const finalizedOrder = await tx.order.findUnique({
           where: { userId_storeId_idempotencyKey: { userId: req.user.id, storeId: req.store.id, idempotencyKey } },
@@ -104,13 +163,10 @@ export const createRazorpayOrder = async (req, res, next) => {
         })
         if (finalizedOrder) throw paymentConflict('This checkout already has a finalized Order')
 
-        const unresolvedAttempt = await tx.payment.findFirst({
-          where: { userId: req.user.id, storeId: req.store.id, idempotencyKey, orderId: null, status: { in: ['CREATED', 'AUTHORIZED', 'CAPTURED'] } },
-          orderBy: { createdAt: 'asc' },
-        })
-        if (unresolvedAttempt) throw paymentConflict('Another payment attempt for this checkout is unresolved')
+        await assertNoUnresolvedCheckoutPayment(tx, req)
 
         const totals = await calculateTotals(tx, req, req.body?.couponCode)
+        assertExpectedCartMatches(expectedCart, totals.cart?.items ?? [])
         const amountInPaise = Math.round(totals.total * 100)
         if (!Number.isSafeInteger(amountInPaise) || amountInPaise < 1) throw Object.assign(new Error('Cart total is not payable'), { statusCode: 400 })
 
@@ -241,6 +297,11 @@ export const verifyRazorpayPayment = async (req, res) => {
     return res.status(409).json({ message: 'Payment verification conflict' })
   }
   if (payment.orderId) {
+    try {
+      await prisma.$transaction((tx) => queueShipment(tx, payment.orderId))
+    } catch (error) {
+      return res.status(error?.statusCode || 500).json({ message: error?.statusCode ? error.message : 'Payment finalization failed' })
+    }
     return res.status(200).json({ success: true, orderId: payment.orderId, paymentStatus: payment.status })
   }
   if (payment.status === 'CREATED' && payment.providerOrderId && !payment.checkoutSnapshot) {
@@ -261,7 +322,10 @@ export const verifyRazorpayPayment = async (req, res) => {
     const result = await prisma.$transaction(async (tx) => {
       const currentPayment = await tx.payment.findFirst({ where: { id: localPaymentId, userId: req.user.id, storeId: req.store.id } })
       if (!currentPayment || currentPayment.provider !== 'RAZORPAY' || currentPayment.providerOrderId !== razorpayOrderId) throw Object.assign(new Error('Payment verification failed'), { statusCode: 404 })
-      if (currentPayment.orderId) return { orderId: currentPayment.orderId, paymentStatus: currentPayment.status }
+      if (currentPayment.orderId) {
+        await queueShipment(tx, currentPayment.orderId)
+        return { orderId: currentPayment.orderId, paymentStatus: currentPayment.status }
+      }
       if (currentPayment.status !== 'CREATED' || (currentPayment.providerPaymentId && currentPayment.providerPaymentId !== razorpayPaymentId)) {
         throw Object.assign(new Error('Payment has already been finalized'), { statusCode: 409 })
       }
@@ -278,7 +342,10 @@ export const verifyRazorpayPayment = async (req, res) => {
       })
       if (claimed.count !== 1) {
         const finalizedPayment = await tx.payment.findUnique({ where: { id: localPaymentId } })
-        if (finalizedPayment?.orderId) return { orderId: finalizedPayment.orderId, paymentStatus: finalizedPayment.status }
+        if (finalizedPayment?.orderId) {
+          await queueShipment(tx, finalizedPayment.orderId)
+          return { orderId: finalizedPayment.orderId, paymentStatus: finalizedPayment.status }
+        }
         throw Object.assign(new Error('Payment has already been finalized'), { statusCode: 409 })
       }
 
@@ -289,6 +356,7 @@ export const verifyRazorpayPayment = async (req, res) => {
       })
       if (!finalized.created) return { checkoutConflict: true, paymentStatus: 'AUTHORIZED' }
       await tx.payment.update({ where: { id: localPaymentId }, data: { orderId: finalized.order.id } })
+      await queueShipment(tx, finalized.order.id)
       return { orderId: finalized.order.id, paymentStatus: 'AUTHORIZED' }
     })
     if (result.checkoutConflict) {

@@ -6,6 +6,14 @@ import formal from "@/assets/collection-formal.jpg";
 import knitwear from "@/assets/collection-knitwear.jpg";
 import street from "@/assets/collection-street.jpg";
 
+export type BackendProductVariant = {
+  id: number;
+  size?: string | null;
+  color?: string | null;
+  colorCode?: string | null;
+  status?: string;
+};
+
 export type Product = {
   id: string;
   name: string;
@@ -20,6 +28,11 @@ export type Product = {
   sizes: string[];
   fabric: string;
   description: string;
+  backendProductId?: number;
+  backendVariants?: BackendProductVariant[];
+  availability?: string;
+  countInStock?: number;
+  images?: string[];
 };
 
 export const collections = [

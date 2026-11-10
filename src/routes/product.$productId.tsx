@@ -14,10 +14,11 @@ import {
   Scissors,
   Sparkles,
 } from "lucide-react";
-import { findProduct, products, type Product } from "@/lib/products";
+import { findProduct, type Product } from "@/lib/products";
 import { apiFetch } from "@/lib/api";
 import { getProductImage } from "@/lib/image-utils";
 import { ProductCard } from "@/components/site/ProductCard";
+import { useStorefrontProducts } from "@/lib/hastonProducts";
 import { PageShell } from "@/components/site/PageShell";
 import { SizeGuide } from "@/components/site/SizeGuide";
 import { useShop } from "@/lib/store";
@@ -58,11 +59,21 @@ type EffectiveProduct = {
 
 type SelectableColor = { name: string; code: string | null; value: string };
 
+const normalizeVariantOption = (value?: string | null) => value?.trim().toLowerCase() ?? "";
+
+const formatRupees = (value: number) =>
+  new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 2,
+  }).format(value);
+
 
 
 function ProductPage() {
   const { productId } = useParams();
   const product = findProduct(productId ?? "");
+  const storefrontProducts = useStorefrontProducts();
 
   // Fetch backend options as well as the product fallback so stored variants can override local options.
   const [apiProduct, setApiProduct] = useState<ApiProduct | null>(null);
@@ -104,23 +115,27 @@ function ProductPage() {
   const effectiveProduct: EffectiveProduct | null = product
     ? {
         ...product,
-        colors: hasBackendVariantOptions ? apiProduct?.colors ?? [] : product.colors,
-        sizes: hasBackendVariantOptions ? apiProduct?.sizes ?? [] : product.sizes,
+        colors: hasBackendVariantOptions ? (apiProduct?.colors ?? []) : product.colors,
+        sizes: hasBackendVariantOptions ? (apiProduct?.sizes ?? []) : product.sizes,
       }
     : apiProduct
-    ? {
-        id: String(apiProduct.id),
-        name: apiProduct.name,
-        category: typeof apiProduct.category === 'string' ? apiProduct.category : apiProduct.category?.name ?? '',
-        price: typeof apiProduct.price === 'string' ? Number(apiProduct.price) : apiProduct.price,
-        image: getProductImage(apiProduct.images),
-        altImage: apiProduct.images && apiProduct.images.length > 1 ? apiProduct.images[1] : undefined,
-        colors: apiProduct.colors ?? [],
-        sizes: apiProduct.sizes ?? [],
-        fabric: apiProduct.fabric ?? '',
-        description: apiProduct.description ?? '',
-      }
-    : null;
+      ? {
+          id: String(apiProduct.id),
+          name: apiProduct.name,
+          category:
+            typeof apiProduct.category === "string"
+              ? apiProduct.category
+              : (apiProduct.category?.name ?? ""),
+          price: typeof apiProduct.price === "string" ? Number(apiProduct.price) : apiProduct.price,
+          image: getProductImage(apiProduct.images),
+          altImage:
+            apiProduct.images && apiProduct.images.length > 1 ? apiProduct.images[1] : undefined,
+          colors: apiProduct.colors ?? [],
+          sizes: apiProduct.sizes ?? [],
+          fabric: apiProduct.fabric ?? "",
+          description: apiProduct.description ?? "",
+        }
+      : null;
 
   const colorOptions: SelectableColor[] = effectiveProduct
     ? hasBackendVariantOptions
@@ -129,12 +144,14 @@ function ProductPage() {
     : [];
 
   // Initialize state variables (always called, never conditionally)
-  const gallery = effectiveProduct ? [
-    effectiveProduct.image,
-    effectiveProduct.altImage ?? effectiveProduct.image,
-    effectiveProduct.image,
-    effectiveProduct.altImage ?? effectiveProduct.image,
-  ] : [];
+  const gallery = effectiveProduct
+    ? [
+        effectiveProduct.image,
+        effectiveProduct.altImage ?? effectiveProduct.image,
+        effectiveProduct.image,
+        effectiveProduct.altImage ?? effectiveProduct.image,
+      ]
+    : [];
 
   const [activeImg, setActiveImg] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -145,6 +162,42 @@ function ProductPage() {
   const [zoomPos, setZoomPos] = useState<{ x: number; y: number } | null>(null);
   const imgRef = useRef<HTMLDivElement>(null);
   const selectedColorOption = colorOptions.find((option) => option.value === color) ?? colorOptions[0];
+  const matchingApiProduct =
+    apiProduct &&
+    Number.isSafeInteger(apiProduct.id) &&
+    apiProduct.id > 0 &&
+    (productId && /^\d+$/.test(productId)
+      ? apiProduct.id === Number(productId)
+      : apiProduct.slug === productId)
+      ? apiProduct
+      : null;
+  const selectedApiVariants = matchingApiProduct?.variants?.length
+    ? matchingApiProduct.variants.filter((variant) => {
+        const selectedColors = new Set(
+          [selectedColorOption?.name, selectedColorOption?.code, selectedColorOption?.value]
+            .map(normalizeVariantOption)
+            .filter(Boolean),
+        );
+        return (
+          variant.status === "ACTIVE" &&
+          normalizeVariantOption(variant.size) === normalizeVariantOption(size) &&
+          [variant.color, variant.colorCode].some((value) =>
+            selectedColors.has(normalizeVariantOption(value)),
+          )
+        );
+      })
+    : [];
+  const selectedApiVariant = selectedApiVariants.length === 1 ? selectedApiVariants[0] : null;
+  const backendIdentity =
+    matchingApiProduct &&
+    Array.isArray(matchingApiProduct.variants) &&
+    (matchingApiProduct.variants.length === 0 ||
+      (Number.isSafeInteger(selectedApiVariant?.id) && Number(selectedApiVariant?.id) > 0))
+      ? "verified"
+      : "unresolved";
+  const displayPrice = matchingApiProduct && Number.isFinite(Number(matchingApiProduct.price))
+    ? Number(selectedApiVariant?.priceOverride ?? matchingApiProduct.price)
+      : (effectiveProduct?.price ?? 0);
 
   useEffect(() => {
     if (!hasBackendVariantOptions || !apiProduct) return;
@@ -153,12 +206,22 @@ function ProductPage() {
     if (size && !apiProduct.sizes?.includes(size)) setSize(null);
   }, [apiProduct, color, hasBackendVariantOptions, size]);
 
-  const related: Product[] = effectiveProduct ? products
-    .filter((p: Product) => p.id !== effectiveProduct.id && p.category === effectiveProduct.category)
-    .concat(products.filter((p: Product) => p.id !== effectiveProduct.id && p.category !== effectiveProduct.category))
-    .slice(0, 4) : [];
+  const related: Product[] = effectiveProduct
+    ? storefrontProducts
+        .filter(
+          (p: Product) => p.id !== effectiveProduct.id && p.category === effectiveProduct.category,
+        )
+        .concat(
+          storefrontProducts.filter(
+            (p: Product) =>
+              p.id !== effectiveProduct.id && p.category !== effectiveProduct.category,
+          ),
+        )
+        .slice(0, 4)
+    : [];
 
-  const handlePrevImage = () => setActiveImg((current) => (current - 1 + gallery.length) % gallery.length);
+  const handlePrevImage = () =>
+    setActiveImg((current) => (current - 1 + gallery.length) % gallery.length);
   const handleNextImage = () => setActiveImg((current) => (current + 1) % gallery.length);
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -330,7 +393,7 @@ function ProductPage() {
             transition={{ duration: 0.7, delay: 0.1 }}
             className="lg:sticky lg:top-28 self-start"
           >
-                    <p className="text-[10px] tracking-luxury uppercase text-gold">
+            <p className="text-[10px] tracking-luxury uppercase text-gold">
               {effectiveProduct!.category}
             </p>
             <h1 className="font-display text-4xl md:text-5xl mt-3 leading-[1.05]">
@@ -338,9 +401,7 @@ function ProductPage() {
             </h1>
 
             <div className="mt-5 flex items-center gap-5">
-              <p className="font-serif text-3xl">
-                ${effectiveProduct!.price.toLocaleString()}
-              </p>
+              <p className="font-serif text-3xl">{formatRupees(displayPrice)}</p>
               <div className="flex items-center gap-1 text-gold">
                 {Array.from({ length: 5 }).map((_, k) => (
                   <Star key={k} className="h-3 w-3 fill-current" />
@@ -350,6 +411,11 @@ function ProductPage() {
                 </span>
               </div>
             </div>
+            {!matchingApiProduct && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Catalog fallback price (not backend-confirmed)
+              </p>
+            )}
 
             <p className="mt-8 font-serif text-lg italic text-muted-foreground leading-relaxed">
               {effectiveProduct!.description}
@@ -418,7 +484,18 @@ function ProductPage() {
 
             {/* CTA */}
             {effectiveProduct && (
-              <ProductCTA product={effectiveProduct as NonNullable<ReturnType<typeof findProduct>>} size={size} color={hasBackendVariantOptions ? selectedColorOption?.name || "" : color} qty={qty} setQty={setQty} />
+              <ProductCTA
+                product={effectiveProduct as NonNullable<ReturnType<typeof findProduct>>}
+                size={size}
+                color={hasBackendVariantOptions ? selectedColorOption?.name || "" : color}
+                qty={qty}
+                setQty={setQty}
+                backendProductId={matchingApiProduct?.id}
+                backendVariantId={
+                  matchingApiProduct?.variants?.length ? selectedApiVariant?.id : null
+                }
+                backendIdentity={backendIdentity}
+              />
             )}
 
             {/* Scarcity */}
@@ -450,9 +527,9 @@ function ProductPage() {
                 icon={<Scissors className="h-3 w-3" />}
                 defaultOpen
               >
-                {effectiveProduct!.fabric}. Hand-finished in our Milano atelier. Each
-                piece carries the stitched signature of its tailor and a unique
-                serial woven into the inner placket.
+                {effectiveProduct!.fabric}. Hand-finished in our Milano atelier. Each piece carries
+                the stitched signature of its tailor and a unique serial woven into the inner
+                placket.
               </Detail>
               <Detail title="Care" icon={<Sparkles className="h-3 w-3" />}>
                 Dry clean only. Steam to refresh between wears. Store on a wide
@@ -553,12 +630,18 @@ function ProductCTA({
   color,
   qty,
   setQty,
+  backendProductId,
+  backendVariantId,
+  backendIdentity,
 }: {
   product: NonNullable<ReturnType<typeof findProduct>>;
   size: string | null;
   color: string;
   qty: number;
   setQty: (n: number) => void;
+  backendProductId?: number;
+  backendVariantId?: number | null;
+  backendIdentity: "verified" | "unresolved";
 }) {
   const { addToCart, toggleWishlist, inWishlist } = useShop();
   const wished = inWishlist(product.id);
@@ -567,7 +650,18 @@ function ProductCTA({
       toast("Please select a size", { className: "luxury-toast" });
       return;
     }
-    addToCart({ id: product.id, qty, size, color }, product.name);
+    addToCart(
+      {
+        id: product.id,
+        qty,
+        size,
+        color,
+        backendProductId,
+        backendVariantId,
+        backendIdentity,
+      },
+      product.name,
+    );
   };
   return (
     <div className="mt-10 flex items-stretch gap-3">

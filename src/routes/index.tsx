@@ -4,8 +4,9 @@ import { useRef } from "react";
 import { ArrowRight, Star } from "lucide-react";
 import storyImg from "@/assets/story.jpg";
 import experienceImg from "@/assets/experience.jpg";
-import { collections, products } from "@/lib/products";
+import { collections } from "@/lib/products";
 import { ProductCard } from "@/components/site/ProductCard";
+import { useStorefrontProducts } from "@/lib/hastonProducts";
 import { SectionHeading } from "@/components/site/SectionHeading";
 import { CinematicHero } from "@/components/site/CinematicHero";
 
@@ -60,6 +61,8 @@ function FeaturedCollections() {
 }
 
 function NewArrivals() {
+  const storefrontProducts = useStorefrontProducts();
+
   return (
     <section className="py-24 md:py-32 bg-secondary/30">
       <div className="mx-auto max-w-[1500px] px-4 sm:px-6 md:px-8 lg:px-12">
@@ -68,7 +71,7 @@ function NewArrivals() {
           <Link to="/shop" className="text-[11px] tracking-luxury uppercase link-underline text-gold">View All</Link>
         </div>
         <div className="mt-14 grid gap-x-6 gap-y-12 sm:grid-cols-2 lg:grid-cols-4">
-          {products.slice(0, 4).map((p, i) => (
+          {storefrontProducts.slice(0, 4).map((p, i) => (
             <ProductCard key={p.id} product={p} index={i} />
           ))}
         </div>

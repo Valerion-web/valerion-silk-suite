@@ -15,6 +15,7 @@ import {
   deleteAdminProduct,
   getAdminOrders,
   updateAdminOrderStatus,
+  collectAdminCodPayment,
   deleteAdminOrder,
   getAdminCategories,
   createAdminCategory,
@@ -44,6 +45,16 @@ import {
   exportAdminReport,
   getAdminInventoryHistory,
   getAdminOrderById,
+  confirmAdminShipmentPackage,
+  uploadProductImages,
+  createProductImageUpload,
+  assignAdminShipmentAwb,
+  generateAdminShipmentLabel,
+  requestAdminShipmentPickup,
+  createAdminShipmentManifest,
+  printAdminShipmentManifest,
+  getAdminShipmentManifestOperations,
+  getAdminShipmentOperations,
 } from '../controllers/adminController.js'
 
 const router = express.Router()
@@ -55,10 +66,12 @@ router.get('/stores', requireCapability('analytics'), getAdminStores)
 router.get('/recent-orders', requireCapability('orders'), getRecentOrders)
 router.post('/products/bulk-import', requireCapability('products'), requireConcreteStore, receiveBulkProductImportFiles, validateBulkProductImportRequest)
 router.post('/categories/images', requireCapability('catalog'), requireConcreteStore, uploadAdminCategoryImage)
+router.post('/product-images', requireCapability('products'), requireConcreteStore, uploadProductImages, createProductImageUpload)
 router.route('/products').get(requireCapability('products'), getAdminProducts).post(requireCapability('products'), requireConcreteStore, createAdminProduct)
 router.route('/products/:id').get(requireCapability('products'), getAdminProductById).put(requireCapability('products'), requireConcreteStore, updateAdminProduct).delete(requireCapability('products'), requireConcreteStore, deleteAdminProduct)
 router.route('/orders').get(requireCapability('orders'), getAdminOrders)
 router.patch('/orders/:id/status', requireCapability('orders'), requireConcreteStore, updateAdminOrderStatus)
+router.post('/orders/:id/cod-collection', requireCapability('orders'), requireConcreteStore, collectAdminCodPayment)
 router.route('/orders/:id').delete(requireCapability('orders'), requireConcreteStore, deleteAdminOrder)
 router.get('/inventory', requireCapability('inventory'), getAdminInventory)
 router.get('/inventory/low-stock', requireCapability('inventory'), getLowStockInventory)
@@ -80,6 +93,19 @@ router.patch('/reviews/:id/approve', requireCapability('marketing'), requireConc
 router.patch('/reviews/:id/reject', requireCapability('marketing'), requireConcreteStore, updateAdminReview)
 router.route('/reviews/:id').delete(requireCapability('marketing'), requireConcreteStore, deleteAdminReview)
 router.route('/settings').get(requireCapability('users'), getAdminSettings).put(requireSuperAdmin, updateAdminSettings)
+router.put(
+  '/orders/:id/shipment/package-confirmation',
+  requireCapability('orders'),
+  requireConcreteStore,
+  confirmAdminShipmentPackage,
+)
+router.get('/shipments/:id/operations', requireCapability('orders'), requireConcreteStore, getAdminShipmentOperations)
+router.post('/shipments/:id/awb', requireCapability('orders'), requireConcreteStore, assignAdminShipmentAwb)
+router.post('/shipments/:id/label', requireCapability('orders'), requireConcreteStore, generateAdminShipmentLabel)
+router.post('/shipments/:id/pickup', requireCapability('orders'), requireConcreteStore, requestAdminShipmentPickup)
+router.post('/manifests', requireCapability('orders'), requireConcreteStore, createAdminShipmentManifest)
+router.get('/manifests/:id/operations', requireCapability('orders'), requireConcreteStore, getAdminShipmentManifestOperations)
+router.post('/manifests/:id/print', requireCapability('orders'), requireConcreteStore, printAdminShipmentManifest)
 router.get('/orders/:id', requireCapability('orders'), getAdminOrderById)
 
 export default router

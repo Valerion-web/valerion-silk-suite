@@ -24,6 +24,13 @@ type ShopProduct = {
   images?: string[];
 };
 
+const formatRupees = (value: number) =>
+  new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 2,
+  }).format(value);
+
 function mapApiProduct(product: ApiProduct): ShopProduct {
   console.log(`🔎 [Shop.mapApiProduct] product.images for id=${product.id}:`, product.images);
   return {
@@ -166,7 +173,7 @@ function ShopPage() {
                       {product.description}
                     </p>
                     <div className="mt-6 flex items-center justify-between gap-4 text-lg font-serif">
-                      <span>${product.price.toLocaleString()}</span>
+                      <span>{formatRupees(product.price)}</span>
                       <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">#{product.id}</span>
                     </div>
                   </div>
