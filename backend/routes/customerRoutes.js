@@ -2,7 +2,11 @@ import express from 'express'
 import { protect } from '../middleware/authMiddleware.js'
 import { requireConcreteStore } from '../middleware/storeMiddleware.js'
 import {
+  getCouponSuggestions,
   getCart,
+  getAddresses,
+  createAddress,
+  setAddressDefault,
   addCartItem,
   updateCartItem,
   removeCartItem,
@@ -21,6 +25,19 @@ import {
 
 const router = express.Router()
 router.use(protect)
+
+const requireCustomer = (req, res, next) => {
+  if (req.user?.role !== 'CUSTOMER') {
+    return res.status(403).json({ message: 'Customer access required' })
+  }
+  next()
+}
+
+router.get('/coupons/suggestions', requireCustomer, requireConcreteStore, getCouponSuggestions)
+
+router.get('/addresses', requireConcreteStore, getAddresses)
+router.post('/addresses', requireConcreteStore, createAddress)
+router.put('/addresses/:id/default', requireConcreteStore, setAddressDefault)
 
 router.get('/cart', requireConcreteStore, getCart)
 router.post('/cart/items', requireConcreteStore, addCartItem)

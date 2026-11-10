@@ -278,6 +278,7 @@ model Order {
   shippingCost             Float?               @default(0)
   shippingAddress          String?
   billingAddress           String?
+  checkoutSnapshot         Json?
   idempotencyKey           String?
   requestFingerprint       String?
   requestContextFingerprint String?

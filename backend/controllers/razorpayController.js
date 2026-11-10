@@ -248,6 +248,11 @@ export const verifyRazorpayPayment = async (req, res) => {
     return res.status(409).json({ message: 'Payment verification conflict' })
   }
   if (payment.orderId) {
+    try {
+      await prisma.$transaction((tx) => queueShipment(tx, payment.orderId))
+    } catch (error) {
+      return res.status(error?.statusCode || 500).json({ message: error?.statusCode ? error.message : 'Payment finalization failed' })
+    }
     return res.status(200).json({ success: true, orderId: payment.orderId, paymentStatus: payment.status })
   }
   if (payment.status === 'CREATED' && payment.providerOrderId && !payment.checkoutSnapshot) {
@@ -268,7 +273,10 @@ export const verifyRazorpayPayment = async (req, res) => {
     const result = await prisma.$transaction(async (tx) => {
       const currentPayment = await tx.payment.findFirst({ where: { id: localPaymentId, userId: req.user.id, storeId: req.store.id } })
       if (!currentPayment || currentPayment.provider !== 'RAZORPAY' || currentPayment.providerOrderId !== razorpayOrderId) throw Object.assign(new Error('Payment verification failed'), { statusCode: 404 })
-      if (currentPayment.orderId) return { orderId: currentPayment.orderId, paymentStatus: currentPayment.status }
+      if (currentPayment.orderId) {
+        await queueShipment(tx, currentPayment.orderId)
+        return { orderId: currentPayment.orderId, paymentStatus: currentPayment.status }
+      }
       if (currentPayment.status !== 'CREATED' || (currentPayment.providerPaymentId && currentPayment.providerPaymentId !== razorpayPaymentId)) {
         throw Object.assign(new Error('Payment has already been finalized'), { statusCode: 409 })
       }
@@ -285,7 +293,10 @@ export const verifyRazorpayPayment = async (req, res) => {
       })
       if (claimed.count !== 1) {
         const finalizedPayment = await tx.payment.findUnique({ where: { id: localPaymentId } })
-        if (finalizedPayment?.orderId) return { orderId: finalizedPayment.orderId, paymentStatus: finalizedPayment.status }
+        if (finalizedPayment?.orderId) {
+          await queueShipment(tx, finalizedPayment.orderId)
+          return { orderId: finalizedPayment.orderId, paymentStatus: finalizedPayment.status }
+        }
         throw Object.assign(new Error('Payment has already been finalized'), { statusCode: 409 })
       }
 

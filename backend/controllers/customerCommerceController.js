@@ -534,6 +534,167 @@ export const validateCheckout = async (req, res, next) => {
   }
 }
 
+export const getCouponSuggestions = async (req, res, next) => {
+  try {
+    try {
+      await getValidatedLineItems(prisma, req)
+    } catch (error) {
+      if (error.message === 'Cart is empty') return res.json([])
+      throw error
+    }
+
+    const candidates = await prisma.coupon.findMany({
+      where: { storeId: req.store.id, active: true },
+      select: { code: true },
+    })
+    const suggestions = []
+    const seenCodes = new Set()
+
+    for (const candidate of candidates) {
+      const code = normalizeCouponCode(candidate.code)
+      if (!code || seenCodes.has(code)) continue
+      seenCodes.add(code)
+
+      let totals
+      try {
+        totals = await calculateTotals(prisma, req, code)
+      } catch (error) {
+        if (error.statusCode === 400 && error.message === 'Coupon is invalid or not applicable') continue
+        throw error
+      }
+
+      const coupon = totals.coupon
+      if (!coupon) continue
+      const suggestion = {
+        code: coupon.code,
+        discountType: coupon.discountType,
+        value: Number(coupon.value),
+        minOrderValue: coupon.minOrderValue == null ? null : Number(coupon.minOrderValue),
+        allowFreeShipping: Boolean(coupon.allowFreeShipping),
+        startsAt: coupon.startsAt ? coupon.startsAt.toISOString() : null,
+        endsAt: coupon.endsAt ? coupon.endsAt.toISOString() : null,
+        message: 'Eligible for your current cart',
+      }
+      if (coupon.discountType === 'PERCENTAGE') {
+        suggestion.maxDiscount = parseCouponNumeric(coupon.maxDiscount, null)
+      }
+
+      suggestions.push(suggestion)
+      if (suggestions.length >= 10) break
+    }
+
+    res.json(suggestions)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const getAddresses = async (req, res, next) => {
+  try {
+    const addresses = await prisma.address.findMany({
+      where: { userId: req.user.id },
+      orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
+    })
+    res.json(addresses)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const createAddress = async (req, res, next) => {
+  try {
+    const body = req.body
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      res.status(400)
+      throw new Error('Address details are required')
+    }
+
+    const requiredFields = ['name', 'label', 'line1', 'city', 'state', 'postalCode', 'country']
+    const addressData = {}
+    for (const field of requiredFields) {
+      if (typeof body[field] !== 'string' || !body[field].trim()) {
+        res.status(400)
+        throw new Error(`${field} is required`)
+      }
+      addressData[field] = body[field].trim()
+    }
+
+    for (const field of ['line2', 'phone']) {
+      if (body[field] !== undefined && body[field] !== null && typeof body[field] !== 'string') {
+        res.status(400)
+        throw new Error(`${field} must be a string`)
+      }
+      addressData[field] = typeof body[field] === 'string' ? body[field].trim() || null : null
+    }
+
+    if (body.isDefault !== undefined && typeof body.isDefault !== 'boolean') {
+      res.status(400)
+      throw new Error('isDefault must be a boolean')
+    }
+
+    const address = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${req.user.id} FOR UPDATE`
+
+      const existingCount = await tx.address.count({ where: { userId: req.user.id } })
+      const isDefault = body.isDefault === true || existingCount === 0
+      if (isDefault) {
+        await tx.address.updateMany({
+          where: { userId: req.user.id },
+          data: { isDefault: false },
+        })
+      }
+
+      return tx.address.create({
+        data: {
+          ...addressData,
+          userId: req.user.id,
+          isDefault,
+        },
+      })
+    })
+
+    res.status(201).json(address)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const setAddressDefault = async (req, res, next) => {
+  try {
+    const addressId = Number(req.params.id)
+    if (!Number.isSafeInteger(addressId) || addressId < 1) {
+      res.status(400)
+      throw new Error('A valid address id is required')
+    }
+
+    const address = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${req.user.id} FOR UPDATE`
+      const ownedAddress = await tx.address.findFirst({
+        where: { id: addressId, userId: req.user.id },
+        select: { id: true },
+      })
+      if (!ownedAddress) return null
+
+      await tx.address.updateMany({
+        where: { userId: req.user.id },
+        data: { isDefault: false },
+      })
+      return tx.address.update({
+        where: { id: addressId },
+        data: { isDefault: true },
+      })
+    })
+
+    if (!address) {
+      res.status(404)
+      throw new Error('Address not found')
+    }
+    res.json(address)
+  } catch (error) {
+    next(error)
+  }
+}
+
 const idempotencyKeyFor = (req) => {
   const bodyKey = typeof req.body?.idempotencyKey === 'string' ? req.body.idempotencyKey.trim() : ''
   const headerKey = typeof req.get('Idempotency-Key') === 'string' ? req.get('Idempotency-Key').trim() : ''
@@ -541,6 +702,74 @@ const idempotencyKeyFor = (req) => {
 }
 
 const fingerprintFor = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
+
+const canonicalizeFingerprintValue = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalizeFingerprintValue)
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalizeFingerprintValue(value[key])]))
+  }
+  return value
+}
+
+const orderRequestFingerprintFor = (req) => {
+  const body = req.body || {}
+  const shippingAddress = Object.hasOwn(body, 'shippingAddress') ? body.shippingAddress : {}
+  const billingAddress = Object.hasOwn(body, 'billingAddress') ? body.billingAddress : shippingAddress
+  const normalizedCouponCode = normalizeCouponCode(body.couponCode)
+  return fingerprintFor(canonicalizeFingerprintValue({
+    shippingAddress,
+    billingAddress,
+    couponCode: normalizedCouponCode || null,
+  }))
+}
+
+const legacyOrderRequestFingerprintFor = (req) => {
+  const shippingAddress = JSON.stringify(req.body?.shippingAddress || {})
+  const billingAddress = JSON.stringify(req.body?.billingAddress || req.body?.shippingAddress || {})
+  return fingerprintFor({ shippingAddress, billingAddress, couponCode: req.body?.couponCode || null })
+}
+
+const parseStoredAddress = (value, fallback) => {
+  if (typeof value !== 'string') return value === undefined || value === null ? fallback : value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+const persistedOrderRequestFingerprintFor = (order) => {
+  const shippingAddress = parseStoredAddress(order.shippingAddress, {})
+  const billingAddress = parseStoredAddress(order.billingAddress, shippingAddress)
+  const normalizedCouponCode = normalizeCouponCode(order.couponCode)
+  return fingerprintFor(canonicalizeFingerprintValue({
+    shippingAddress,
+    billingAddress,
+    couponCode: normalizedCouponCode || null,
+  }))
+}
+
+const orderRequestFingerprintFromSnapshot = (snapshot) => {
+  const shippingAddress = parseStoredAddress(snapshot.shippingAddress, {})
+  const billingAddress = parseStoredAddress(snapshot.billingAddress, shippingAddress)
+  const normalizedCouponCode = normalizeCouponCode(snapshot.coupon?.code)
+  return fingerprintFor(canonicalizeFingerprintValue({
+    shippingAddress,
+    billingAddress,
+    couponCode: normalizedCouponCode || null,
+  }))
+}
+
+const orderRequestFingerprintMatches = (order, req) => {
+  if (!order.requestFingerprint) return true
+  const currentFingerprint = orderRequestFingerprintFor(req)
+  return order.requestFingerprint === currentFingerprint
+    || order.requestFingerprint === legacyOrderRequestFingerprintFor(req)
+    || persistedOrderRequestFingerprintFor(order) === currentFingerprint
+}
+
+const idempotencyConflictError = () => Object.assign(new Error('Idempotency key was reused for a different order request'), { statusCode: 409 })
+
 const COD_MAX_TOTAL_CENTS = 5_000_000
 
 const codRequestFingerprint = ({ items, shippingAddress, billingAddress, couponCode }) => {
@@ -809,7 +1038,12 @@ export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, re
       where: { userId_storeId_idempotencyKey: { userId: req.user.id, storeId: req.store.id, idempotencyKey } },
       include: { items: { include: { product: { include: productInclude }, variant: true } }, statusHistory: true },
     })
-    if (existingOrder) return { order: existingOrder, created: false }
+    if (existingOrder) {
+      if (!(requireIdempotency && existingOrder.status === 'AWAITING_PAYMENT') && !orderRequestFingerprintMatches(existingOrder, req)) {
+        throw idempotencyConflictError()
+      }
+      return { order: existingOrder, created: false }
+    }
   }
 
   const totals = checkoutSnapshot
@@ -817,7 +1051,9 @@ export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, re
     : await calculateTotals(tx, req, req.body?.couponCode)
   const shippingAddress = checkoutSnapshot ? checkoutSnapshot.shippingAddress : JSON.stringify(req.body?.shippingAddress || {})
   const billingAddress = checkoutSnapshot ? checkoutSnapshot.billingAddress : JSON.stringify(req.body?.billingAddress || req.body?.shippingAddress || {})
-  const requestFingerprint = checkoutSnapshot?.requestFingerprint || fingerprintFor({ shippingAddress, billingAddress, couponCode: req.body?.couponCode || null })
+  const requestFingerprint = checkoutSnapshot
+    ? orderRequestFingerprintFromSnapshot(checkoutSnapshot)
+    : orderRequestFingerprintFor(req)
   const requestContextFingerprint = checkoutSnapshot?.requestContextFingerprint || fingerprintFor({ userId: req.user.id, storeId: req.store.id, idempotencyKey })
   const order = await tx.order.create({
     data: {
@@ -836,6 +1072,18 @@ export const finalizeOrderFromCart = async (tx, req, { idempotencyKey = null, re
       discountAmount: totals.discountAmount,
       subtotalBeforeDiscount: totals.subtotalBeforeDiscount,
       shippingCost: totals.shippingCost,
+      checkoutSnapshot: {
+        version: 1,
+        discountAmount: totals.discountAmount,
+        subtotalBeforeDiscount: totals.subtotalBeforeDiscount,
+        shippingCost: totals.shippingCost,
+        coupon: totals.coupon ? {
+          id: totals.coupon.id,
+          code: totals.coupon.code,
+          discountType: totals.coupon.discountType,
+          value: totals.coupon.value,
+        } : null,
+      },
       items: { create: totals.cart.items.map((item) => ({ productId: item.productId, variantId: item.variantId, quantity: item.quantity, price: item.snapshotUnitPrice ?? priceFor(item) })) },
       statusHistory: { create: { status: 'PLACED', note: 'Order placed by customer', changedById: req.user.id } },
     },
@@ -920,7 +1168,10 @@ export const createOrder = async (req, res, next) => {
   } catch (error) {
     if (error?.code === 'P2002' && idempotencyKeyFor(req)) {
       const existingOrder = await prisma.order.findUnique({ where: { userId_storeId_idempotencyKey: { userId: req.user.id, storeId: req.store.id, idempotencyKey: idempotencyKeyFor(req) } } })
-      if (existingOrder) return res.status(200).json(existingOrder)
+      if (existingOrder) {
+        if (!orderRequestFingerprintMatches(existingOrder, req)) return next(idempotencyConflictError())
+        return res.status(200).json(existingOrder)
+      }
     }
     next(error)
   }
