@@ -70,6 +70,7 @@ const makeState = (price = 100, stock = 5) => ({
 const createHarness = (price = 100, stock = 5) => {
   let state = makeState(price, stock)
   let transactionTail = Promise.resolve()
+  let checkoutLockCalls = 0
 
   const productForItem = (item) => state.products.find((product) => product.id === item.productId)
   const variantForItem = (item) => productForItem(item)?.variants.find((variant) => variant.id === item.variantId) ?? null
@@ -83,6 +84,10 @@ const createHarness = (price = 100, stock = 5) => {
   })
 
   const makeTransactionClient = () => ({
+    $queryRaw: async () => {
+      checkoutLockCalls += 1
+      return []
+    },
     product: {
       findMany: async ({ where }) => state.products.filter((product) => (
         product.storeId === where.storeId
@@ -157,6 +162,18 @@ const createHarness = (price = 100, stock = 5) => {
     },
     stockHistory: { create: async ({ data }) => state.stockHistory.push(data) },
     payment: {
+      findFirst: async ({ where }) => state.payments.find((payment) => (
+        payment.userId === where.userId
+        && payment.storeId === where.storeId
+        && (where.id?.not === undefined || payment.id !== where.id.not)
+        && where.OR.some((condition) => (
+          payment.provider === condition.provider
+          && (typeof condition.status === 'string'
+            ? payment.status === condition.status
+            : condition.status.in.includes(payment.status))
+          && (condition.orderId === undefined || payment.orderId === condition.orderId)
+        ))
+      )) ?? null,
       findMany: async ({ where }) => state.payments.filter((payment) => (
         payment.userId === where.userId
         && payment.storeId === where.storeId
@@ -204,6 +221,9 @@ const createHarness = (price = 100, stock = 5) => {
     )),
     get state() {
       return state
+    },
+    get checkoutLockCalls() {
+      return checkoutLockCalls
     },
   }
 }
@@ -352,7 +372,7 @@ test('rejects reusing a COD idempotency key with changed cart data', async () =>
   assert.equal(activeHarness.state.payments.length, 1)
 })
 
-test('does not convert an existing Razorpay payment attempt into COD', async () => {
+test('does not switch from an unresolved Razorpay attempt to COD', async () => {
   activeHarness = createHarness(100, 5)
   activeHarness.state.payments.push({
     id: 4,
@@ -360,7 +380,7 @@ test('does not convert an existing Razorpay payment attempt into COD', async () 
     storeId: 22,
     provider: 'RAZORPAY',
     status: 'CREATED',
-    idempotencyKey: 'cod-test-key',
+    idempotencyKey: 'another-checkout-key',
     paymentAttemptKey: 'razorpay-attempt',
     orderId: null,
   })
@@ -370,6 +390,42 @@ test('does not convert an existing Razorpay payment attempt into COD', async () 
   assert.equal(activeHarness.state.orders.length, 0)
   assert.equal(activeHarness.state.payments.length, 1)
   assert.equal(activeHarness.state.shipments.length, 0)
+})
+
+test('blocks concurrent COD checkouts with different idempotency keys', async () => {
+  activeHarness = createHarness(100, 5)
+  const [first, concurrent] = await Promise.all([
+    invoke(createCodOrder, makeRequest({ idempotencyKey: 'cod-first-session' })),
+    invoke(createCodOrder, makeRequest({ idempotencyKey: 'cod-second-session' })),
+  ])
+  assert.equal(first.response.statusCode, 201)
+  assert.equal(concurrent.response.statusCode, 409)
+  assert.match(concurrent.response.body.message, /previous payment attempt is unresolved/)
+  assert.equal(activeHarness.checkoutLockCalls, 2)
+  assert.equal(activeHarness.state.orders.length, 1)
+  assert.equal(activeHarness.state.payments.length, 1)
+})
+
+test('allows another COD checkout after collection is terminally completed', async () => {
+  activeHarness = createHarness(100, 5)
+  activeHarness.state.payments.push({
+    id: 8,
+    userId: 11,
+    storeId: 22,
+    provider: 'COD',
+    status: 'COD_COLLECTED',
+    idempotencyKey: 'completed-checkout',
+    paymentAttemptKey: 'cod_completed-checkout',
+    orderId: 7,
+  })
+  const { response, nextError } = await invoke(
+    createCodOrder,
+    makeRequest({ idempotencyKey: 'next-checkout' }),
+  )
+  assert.equal(nextError, null)
+  assert.equal(response.statusCode, 201)
+  assert.equal(activeHarness.state.orders.length, 1)
+  assert.equal(activeHarness.state.payments.at(-1).status, 'PENDING_COLLECTION')
 })
 
 test('rejects unavailable options, missing shipment SKU, and invalid address details', async (t) => {

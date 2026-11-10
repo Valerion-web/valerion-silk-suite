@@ -4,7 +4,15 @@ import { Heart, Eye, Star, ShoppingBag, AlertCircle } from "lucide-react";
 import type { Product } from "@/lib/products";
 import { useShop } from "@/lib/store";
 import { getProductImage } from "@/lib/image-utils";
+import { findVerifiedBackendVariant } from "@/lib/hastonProducts";
 import { useState } from "react";
+
+const formatRupees = (value: number) =>
+  new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 2,
+  }).format(value);
 
 export function ProductCard({ product, index = 0 }: { product: Product; index?: number }) {
   const { toggleWishlist, inWishlist, addToCart } = useShop();
@@ -20,8 +28,19 @@ export function ProductCard({ product, index = 0 }: { product: Product; index?: 
   const handleAddToBag = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    const size = product.sizes[0];
+    const color = product.colors[0];
+    const variant = findVerifiedBackendVariant(product, size, color);
     addToCart(
-      { id: product.id, qty: 1, size: product.sizes[0], color: product.colors[0] },
+      {
+        id: product.id,
+        qty: 1,
+        size,
+        color,
+        backendProductId: variant ? product.backendProductId : undefined,
+        backendVariantId: variant?.id,
+        backendIdentity: variant ? "verified" : "unresolved",
+      },
       product.name,
     );
   };
@@ -36,11 +55,9 @@ export function ProductCard({ product, index = 0 }: { product: Product; index?: 
   
   // Support both local product format (image: string) and API format (images: string[])
   // Log the images array to help diagnose missing image rendering
-  console.log(`🔎 [ProductCard] images for product ${product.id}:`, (product as any).images);
+  console.log(`🔎 [ProductCard] images for product ${product.id}:`, product.images);
   // Prefer a direct first-image reference if available to avoid utility transformations
-  const productImage = Array.isArray((product as any).images) && (product as any).images.length > 0
-    ? (product as any).images[0]
-    : product.image || getProductImage((product as any).images);
+  const productImage = product.images?.[0] || product.image || getProductImage(product.images);
 
   return (
     <motion.div
@@ -84,51 +101,65 @@ export function ProductCard({ product, index = 0 }: { product: Product; index?: 
           )}
         </Link>
 
-          <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-500">
-            <motion.button
-              whileTap={{ scale: 0.85 }}
-              onClick={handleWishlist}
-              className={`h-9 w-9 grid place-items-center transition-colors ${wished ? "bg-gold text-midnight" : "bg-frost/95 text-midnight hover:bg-gold"}`}
-              aria-label="Wishlist"
-            >
-              <Heart className={`h-4 w-4 ${wished ? "fill-current" : ""}`} />
-            </motion.button>
-            <Link to={`/product/${product.id}`} className="h-9 w-9 grid place-items-center bg-frost/95 text-midnight hover:bg-gold transition-colors" aria-label="Quick preview">
-              <Eye className="h-4 w-4" />
-            </Link>
-          </div>
-
-          <div className="absolute bottom-12 left-4 right-4 translate-y-3 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500 pointer-events-none">
-            <div className="inline-flex items-center gap-1.5 bg-midnight/70 text-frost backdrop-blur-md border border-gold/25 px-3 py-2 text-[10px] tracking-luxury uppercase">
-              <Eye className="h-3 w-3 text-gold" /> Quick Preview
-            </div>
-          </div>
-
-          <button
-            onClick={handleAddToBag}
-            className="absolute bottom-0 inset-x-0 z-10 md:translate-y-full md:group-hover:translate-y-0 transition-transform duration-500 ease-out bg-midnight text-frost text-[11px] tracking-luxury uppercase text-center py-3 hover:bg-gold hover:text-midnight inline-flex items-center justify-center gap-2"
+        <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-500">
+          <motion.button
+            whileTap={{ scale: 0.85 }}
+            onClick={handleWishlist}
+            className={`h-9 w-9 grid place-items-center transition-colors ${wished ? "bg-gold text-midnight" : "bg-frost/95 text-midnight hover:bg-gold"}`}
+            aria-label="Wishlist"
           >
-            <ShoppingBag className="h-3.5 w-3.5" /> Add to Bag
-          </button>
+            <Heart className={`h-4 w-4 ${wished ? "fill-current" : ""}`} />
+          </motion.button>
+          <Link
+            to={`/product/${product.id}`}
+            className="h-9 w-9 grid place-items-center bg-frost/95 text-midnight hover:bg-gold transition-colors"
+            aria-label="Quick preview"
+          >
+            <Eye className="h-4 w-4" />
+          </Link>
         </div>
 
-        <Link to={`/product/${product.id}`} className="mt-5 flex items-start justify-between gap-4">
-          <div>
-            <p className="text-[10px] tracking-luxury uppercase text-muted-foreground">{product.category}</p>
-            <h3 className="font-display text-lg mt-1 leading-tight">{product.name}</h3>
-            <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-              <span className="flex items-center gap-0.5 text-gold">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <Star key={i} className={`h-3 w-3 ${i < Math.floor(rating) ? "fill-current" : ""}`} />
-                ))}
-              </span>
-              <span>{rating.toFixed(1)} · {reviews} reviews</span>
-            </div>
+        <div className="absolute bottom-12 left-4 right-4 translate-y-3 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500 pointer-events-none">
+          <div className="inline-flex items-center gap-1.5 bg-midnight/70 text-frost backdrop-blur-md border border-gold/25 px-3 py-2 text-[10px] tracking-luxury uppercase">
+            <Eye className="h-3 w-3 text-gold" /> Quick Preview
           </div>
-          <div className="text-right shrink-0">
-            <p className="font-serif text-lg">${product.price.toLocaleString()}</p>
+        </div>
+
+        <button
+          onClick={handleAddToBag}
+          className="absolute bottom-0 inset-x-0 z-10 md:translate-y-full md:group-hover:translate-y-0 transition-transform duration-500 ease-out bg-midnight text-frost text-[11px] tracking-luxury uppercase text-center py-3 hover:bg-gold hover:text-midnight inline-flex items-center justify-center gap-2"
+        >
+          <ShoppingBag className="h-3.5 w-3.5" /> Add to Bag
+        </button>
+      </div>
+
+      <Link to={`/product/${product.id}`} className="mt-5 flex items-start justify-between gap-4">
+        <div>
+          <p className="text-[10px] tracking-luxury uppercase text-muted-foreground">
+            {product.category}
+          </p>
+          <h3 className="font-display text-lg mt-1 leading-tight">{product.name}</h3>
+          <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="flex items-center gap-0.5 text-gold">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Star
+                  key={i}
+                  className={`h-3 w-3 ${i < Math.floor(rating) ? "fill-current" : ""}`}
+                />
+              ))}
+            </span>
+            <span>
+              {rating.toFixed(1)} · {reviews} reviews
+            </span>
           </div>
-        </Link>
+        </div>
+        <div className="text-right shrink-0">
+          <p className="font-serif text-lg">{formatRupees(product.price)}</p>
+          {!product.backendProductId && (
+            <p className="mt-1 text-[10px] text-muted-foreground">Catalog fallback price</p>
+          )}
+        </div>
+      </Link>
     </motion.div>
   );
 }

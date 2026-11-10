@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   User as UserIcon,
   Package,
@@ -21,8 +21,37 @@ export function ProfileMenu({ onDark }: { onDark: boolean }) {
   const [open, setOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [returnTo, setReturnTo] = useState<string | null>(null);
   const { user, signOut } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const state = location.state;
+    if (
+      !state ||
+      typeof state !== "object" ||
+      !("openSignIn" in state) ||
+      state.openSignIn !== true
+    )
+      return;
+
+    const destination =
+      "returnTo" in state &&
+      typeof state.returnTo === "string" &&
+      state.returnTo.startsWith("/") &&
+      !state.returnTo.startsWith("//")
+        ? state.returnTo
+        : null;
+    setReturnTo(destination);
+    setMode("signin");
+    setAuthOpen(true);
+    navigate(`${location.pathname}${location.search}${location.hash}`, {
+      replace: true,
+      state: null,
+    });
+  }, [location, navigate]);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -73,7 +102,21 @@ export function ProfileMenu({ onDark }: { onDark: boolean }) {
         )}
       </AnimatePresence>
 
-      <AuthModal open={authOpen} mode={mode} setMode={setMode} onClose={() => setAuthOpen(false)} />
+      <AuthModal
+        open={authOpen}
+        mode={mode}
+        setMode={setMode}
+        onClose={() => {
+          setAuthOpen(false);
+          setReturnTo(null);
+        }}
+        onAuthenticated={() => {
+          setAuthOpen(false);
+          setOpen(false);
+          if (returnTo) navigate(returnTo, { replace: true });
+          setReturnTo(null);
+        }}
+      />
     </div>
   );
 }
@@ -246,7 +289,19 @@ function SignedOut({ onSignIn, onSignUp }: { onSignIn: () => void; onSignUp: () 
   );
 }
 
-function AuthModal({ open, onClose, mode, setMode }: { open: boolean; onClose: () => void; mode: "signin" | "signup"; setMode: (m: "signin" | "signup") => void }) {
+function AuthModal({
+  open,
+  onClose,
+  onAuthenticated,
+  mode,
+  setMode,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onAuthenticated: () => void;
+  mode: "signin" | "signup";
+  setMode: (m: "signin" | "signup") => void;
+}) {
   const { signIn, signUp, requestPhoneOtp, signInWithPhone, signUpWithPhone } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -278,7 +333,7 @@ function AuthModal({ open, onClose, mode, setMode }: { open: boolean; onClose: (
         setName("");
         setEmail("");
         setPass("");
-        onClose();
+        onAuthenticated();
         return;
       }
 
@@ -295,7 +350,7 @@ function AuthModal({ open, onClose, mode, setMode }: { open: boolean; onClose: (
       setName("");
       setEmail("");
       setPass("");
-      onClose();
+      onAuthenticated();
     } catch (error) {
       // error toast is handled inside auth provider
     } finally {

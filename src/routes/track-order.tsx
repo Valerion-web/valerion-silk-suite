@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { CheckCircle2, Package, Search, Truck } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
 import { PageHeader, PageShell } from "@/components/site/PageShell";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 
 type TrackingEvent = {
   id: number;
@@ -37,6 +39,8 @@ const formatDate = (value?: string | null) => {
 };
 
 function TrackOrderPage() {
+  const { user, hydrated } = useAuth();
+  const location = useLocation();
   const [orderReference, setOrderReference] = useState("");
   const [tracking, setTracking] = useState<OrderTracking | null>(null);
   const [loading, setLoading] = useState(false);
@@ -45,6 +49,7 @@ function TrackOrderPage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!hydrated || !user) return;
     const orderId = orderReference.trim();
     if (!/^\d+$/.test(orderId) || Number(orderId) < 1) {
       setError("Enter the numeric order number from your order confirmation.");
@@ -72,13 +77,64 @@ function TrackOrderPage() {
     }
   };
 
+  const pageHeader = (
+    <PageHeader
+      eyebrow="Order updates"
+      title="Track Your Order"
+      subtitle="View shipment updates shared by the courier for your order."
+    />
+  );
+
+  if (!hydrated) {
+    return (
+      <>
+        {pageHeader}
+        <PageShell className="pt-0">
+          <div className="mx-auto mt-12 max-w-5xl px-6">
+            <div
+              role="status"
+              className="rounded-[32px] border border-border bg-background p-8 text-sm text-muted-foreground"
+            >
+              Checking your sign-in status...
+            </div>
+          </div>
+        </PageShell>
+      </>
+    );
+  }
+
+  if (!user) {
+    return (
+      <>
+        {pageHeader}
+        <PageShell className="pt-0">
+          <div className="mx-auto mt-12 max-w-5xl px-6">
+            <section className="rounded-[32px] border border-border bg-background p-8 text-center shadow-card md:p-10">
+              <h2 className="font-serif text-2xl text-foreground">Sign in to track your order</h2>
+              <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground">
+                Order tracking is available to signed-in customers. Sign in to view your shipment
+                status and courier updates.
+              </p>
+              <Link
+                to="/"
+                state={{
+                  openSignIn: true,
+                  returnTo: `${location.pathname}${location.search}${location.hash}`,
+                }}
+                className="mt-6 inline-flex rounded-full bg-gold px-8 py-3 text-xs uppercase tracking-wider-luxury text-midnight transition hover:bg-[#E3B73B]"
+              >
+                Sign in
+              </Link>
+            </section>
+          </div>
+        </PageShell>
+      </>
+    );
+  }
+
   return (
     <>
-      <PageHeader
-        eyebrow="Order updates"
-        title="Track Your Order"
-        subtitle="View shipment updates shared by the courier for your order."
-      />
+      {pageHeader}
       <PageShell className="pt-0">
         <div className="mx-auto mt-12 max-w-5xl px-6">
           <form

@@ -800,6 +800,29 @@ const codAmountInCents = (amount) => {
   return cents
 }
 
+export const lockCustomerCheckout = async (tx, req) => {
+  // Both checkout providers take this row lock inside Serializable transactions.
+  await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${req.user.id} FOR UPDATE`
+}
+
+export const assertNoUnresolvedCheckoutPayment = async (tx, req, exceptPaymentId = null) => {
+  const payment = await tx.payment.findFirst({
+    where: {
+      userId: req.user.id,
+      storeId: req.store.id,
+      ...(exceptPaymentId === null ? {} : { id: { not: exceptPaymentId } }),
+      OR: [
+        { provider: 'COD', status: 'PENDING_COLLECTION' },
+        { provider: 'RAZORPAY', orderId: null, status: { in: ['CREATED', 'AUTHORIZED', 'CAPTURED'] } },
+      ],
+    },
+    select: { id: true, provider: true, status: true },
+  })
+  if (payment) {
+    throw checkoutError('A previous payment attempt is unresolved; complete or resolve it before starting another checkout', 409)
+  }
+}
+
 const findExistingCodPayment = async (tx, req, idempotencyKey, fingerprint) => {
   const payments = await tx.payment.findMany({
     where: { userId: req.user.id, storeId: req.store.id, idempotencyKey },
@@ -872,8 +895,10 @@ export const createCodOrder = async (req, res, next) => {
       couponCode: req.body?.couponCode,
     })
     const result = await prisma.$transaction(async (tx) => {
+      await lockCustomerCheckout(tx, req)
       const existingPayment = await findExistingCodPayment(tx, req, idempotencyKey, fingerprint)
       if (existingPayment) return { ...existingPayment, created: false }
+      await assertNoUnresolvedCheckoutPayment(tx, req)
       const existingOrder = await tx.order.findUnique({
         where: { userId_storeId_idempotencyKey: { userId: req.user.id, storeId: req.store.id, idempotencyKey } },
         select: { id: true },

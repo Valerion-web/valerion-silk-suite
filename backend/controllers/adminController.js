@@ -1,5 +1,11 @@
 import prisma from '../lib/prisma.js'
 import bcrypt from 'bcryptjs'
+import crypto from 'node:crypto'
+import { mkdir, open, unlink } from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import multer from 'multer'
+import sharp from 'sharp'
 import { storeWhere } from '../middleware/storeMiddleware.js'
 import { deleteOrderIfUnshipped } from '../services/orderDeletion.js'
 import { validateShipmentPackageMeasurements } from '../services/shipmentPackageMeasurements.js'
@@ -10,6 +16,127 @@ import { cancelOrderWithCodPayment, createAdminCodCollectionHandler } from '../s
 const adminRoles = ['SUPER_ADMIN', 'ADMIN', 'BRAND_MANAGER', 'INVENTORY_MANAGER', 'ORDER_MANAGER', 'MARKETING_MANAGER']
 const VALID_ORDER_STATUSES = new Set(['PLACED', 'PENDING', 'PROCESSING', 'PACKED', 'SHIPPED', 'DELIVERED', 'CANCELLED'])
 const shipmentOperations = createShipmentOperationsService({ prismaClient: prisma })
+
+const productUploadDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'uploads', 'products')
+const MAX_PRODUCT_IMAGE_FILE_SIZE = 10 * 1024 * 1024
+const MAX_PRODUCT_IMAGE_PIXELS = 20_000_000
+const MAX_PRODUCT_IMAGE_BATCH_PIXELS = 60_000_000
+const productImageFormats = {
+  jpeg: { extension: 'jpg', mimeType: 'image/jpeg', extensions: new Set(['.jpg', '.jpeg']) },
+  png: { extension: 'png', mimeType: 'image/png', extensions: new Set(['.png']) },
+  webp: { extension: 'webp', mimeType: 'image/webp', extensions: new Set(['.webp']) },
+}
+const productImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { files: 10, fileSize: MAX_PRODUCT_IMAGE_FILE_SIZE },
+})
+
+export const uploadProductImages = (req, res, next) => {
+  productImageUpload.array('images', 10)(req, res, (error) => {
+    if (!error) return next()
+
+    if (error instanceof multer.MulterError) {
+      error.statusCode = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400
+    } else if (error instanceof Error && error.message === 'Unexpected end of form') {
+      error.statusCode = 400
+    }
+
+    return next(error)
+  })
+}
+
+const productImageUploadError = (message) => Object.assign(new Error(message), { statusCode: 400 })
+
+const decodeProductImage = async (file, format, maxPixels) => {
+  let metadata
+  try {
+    const options = { failOn: 'error', limitInputPixels: MAX_PRODUCT_IMAGE_PIXELS, sequentialRead: true }
+    metadata = await sharp(file.buffer, options).metadata()
+  } catch {
+    throw productImageUploadError('Each file must contain a valid JPEG, PNG, or WebP image')
+  }
+
+  if (metadata.format !== format || (metadata.pages ?? 1) !== 1) {
+    throw productImageUploadError('Each file must contain a single-frame JPEG, PNG, or WebP image')
+  }
+
+  if (!metadata.width || !metadata.height || metadata.width * metadata.height > maxPixels) {
+    throw productImageUploadError('Image dimensions exceed the allowed limit')
+  }
+
+  try {
+    const encoded = await sharp(file.buffer, {
+      failOn: 'error',
+      limitInputPixels: MAX_PRODUCT_IMAGE_PIXELS,
+      sequentialRead: true,
+    })
+      .rotate()
+      .toFormat(format)
+      .toBuffer()
+    return { metadata, buffer: encoded }
+  } catch {
+    throw productImageUploadError('Each file must contain a valid JPEG, PNG, or WebP image')
+  }
+}
+
+export const createProductImageUpload = async (req, res, next) => {
+  const files = Array.isArray(req.files) ? req.files : []
+  if (files.length === 0) {
+    return next(productImageUploadError('At least one image file is required'))
+  }
+
+  const processedImages = []
+  let totalPixels = 0
+
+  try {
+    for (const file of files) {
+      const extension = path.extname(file.originalname).toLowerCase()
+      const declaredFormat = Object.entries(productImageFormats).find(([, details]) => (
+        details.mimeType === file.mimetype && details.extensions.has(extension)
+      ))?.[0]
+
+      if (!declaredFormat) {
+        throw productImageUploadError('File type and extension must match JPEG, PNG, or WebP content')
+      }
+
+      const maxPixels = Math.min(MAX_PRODUCT_IMAGE_PIXELS, MAX_PRODUCT_IMAGE_BATCH_PIXELS - totalPixels)
+      const { metadata, buffer } = await decodeProductImage(file, declaredFormat, maxPixels)
+      totalPixels += metadata.width * metadata.height
+
+      processedImages.push({
+        extension: productImageFormats[declaredFormat].extension,
+        buffer,
+      })
+    }
+
+    await mkdir(productUploadDirectory, { recursive: true })
+    const createdPaths = []
+    try {
+      for (const image of processedImages) {
+        const filename = `${crypto.randomUUID()}.${image.extension}`
+        const filePath = path.join(productUploadDirectory, filename)
+        const handle = await open(filePath, 'wx', 0o644)
+        createdPaths.push(filePath)
+        try {
+          await handle.writeFile(image.buffer)
+        } finally {
+          await handle.close()
+        }
+        image.url = `/uploads/products/${filename}`
+      }
+    } catch (error) {
+      const cleanupResults = await Promise.allSettled(createdPaths.map((filePath) => unlink(filePath)))
+      const cleanupErrors = cleanupResults.filter((result) => result.status === 'rejected').map((result) => result.reason)
+      return next(cleanupErrors.length
+        ? new AggregateError([error, ...cleanupErrors], 'Product image upload failed and cleanup was incomplete')
+        : error)
+    }
+
+    return res.status(201).json({ images: processedImages.map((image) => image.url) })
+  } catch (error) {
+    return next(error)
+  }
+}
 
 const storeScope = (req, where = {}) => {
   return storeWhere(req, where)

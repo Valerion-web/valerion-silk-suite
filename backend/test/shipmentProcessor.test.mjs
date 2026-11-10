@@ -484,6 +484,44 @@ test('builds a rupee payload from stored rupee amounts at paise precision', asyn
   assert.equal(payload.height, 3)
 })
 
+test('only marks shipping as billing when address and recipient contact details match', async (t) => {
+  for (const [name, updateBilling, expectedShippingContact] of [
+    ['different recipient name', (billing) => { billing.name = 'Billing Recipient' }, {
+      shipping_customer_name: 'Test',
+      shipping_last_name: 'Recipient',
+    }],
+    ['different recipient phone', (billing) => { billing.phone = '+91 1111111111' }, {
+      shipping_phone: '+91 9876543210',
+    }],
+    ['different recipient email', (billing) => { billing.email = 'billing@example.test' }, {
+      shipping_email: 'recipient@example.test',
+    }],
+    ['matching address and contact details', () => {}, null],
+  ]) {
+    await t.test(name, async () => {
+      const order = validOrder()
+      const billing = JSON.parse(order.shippingAddress)
+      updateBilling(billing)
+      order.billingAddress = JSON.stringify(billing)
+      const harness = makeHarness({ order })
+
+      await harness.processor.processShipment(5)
+
+      const payload = harness.providerCalls[0]
+      assert.equal(payload.shipping_is_billing, expectedShippingContact === null)
+      if (expectedShippingContact) {
+        for (const [field, value] of Object.entries(expectedShippingContact)) {
+          assert.equal(payload[field], value)
+        }
+      } else {
+        assert.equal(Object.hasOwn(payload, 'shipping_customer_name'), false)
+        assert.equal(Object.hasOwn(payload, 'shipping_email'), false)
+        assert.equal(Object.hasOwn(payload, 'shipping_phone'), false)
+      }
+    })
+  }
+})
+
 test('rejects incomplete, inconsistent or unsupported order financial data', async (t) => {
   for (const [name, updateOrder, expectedMessage] of [
     ['missing discount data', (order) => { order.discountAmount = null }, /Stored discount is missing or invalid/],
@@ -741,42 +779,4 @@ test('rejects invalid shipment IDs before database access', async () => {
   })
   assert.equal(harness.updateManyCalls.length, 0)
   assert.equal(harness.providerCalls.length, 0)
-})
-
-test('only marks shipping as billing when address and recipient contact details match', async (t) => {
-  for (const [name, updateBilling, expectedShippingContact] of [
-    ['different recipient name', (billing) => { billing.name = 'Billing Recipient' }, {
-      shipping_customer_name: 'Test',
-      shipping_last_name: 'Recipient',
-    }],
-    ['different recipient phone', (billing) => { billing.phone = '+91 1111111111' }, {
-      shipping_phone: '+91 9876543210',
-    }],
-    ['different recipient email', (billing) => { billing.email = 'billing@example.test' }, {
-      shipping_email: 'recipient@example.test',
-    }],
-    ['matching address and contact details', () => {}, null],
-  ]) {
-    await t.test(name, async () => {
-      const order = validOrder()
-      const billing = JSON.parse(order.shippingAddress)
-      updateBilling(billing)
-      order.billingAddress = JSON.stringify(billing)
-      const harness = makeHarness({ order })
-
-      await harness.processor.processShipment(5)
-
-      const payload = harness.providerCalls[0]
-      assert.equal(payload.shipping_is_billing, expectedShippingContact === null)
-      if (expectedShippingContact) {
-        for (const [field, value] of Object.entries(expectedShippingContact)) {
-          assert.equal(payload[field], value)
-        }
-      } else {
-        assert.equal(Object.hasOwn(payload, 'shipping_customer_name'), false)
-        assert.equal(Object.hasOwn(payload, 'shipping_email'), false)
-        assert.equal(Object.hasOwn(payload, 'shipping_phone'), false)
-      }
-    })
-  }
 })

@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { ChevronRight, Sparkles } from "lucide-react";
 import { categories, getCategoryBySlug, getProductsByCategorySlug, slugifyCategory } from "@/lib/products";
 import { ProductCard } from "@/components/site/ProductCard";
+import { useStorefrontProducts } from "@/lib/hastonProducts";
 import { PageShell, PageHeader } from "@/components/site/PageShell";
 import suits from "@/assets/collection-suits.jpg";
 import shirts from "@/assets/collection-shirts.jpg";
@@ -47,6 +48,7 @@ const resolveCategory = (slug: string) => getCategoryBySlug(LEGACY_SLUGS[slug] ?
 
 
 function CategorySlugPage() {
+  const storefrontProducts = useStorefrontProducts();
   const location = useLocation();
   const rootPath = location.pathname.startsWith("/collection") ? "/collection" : "/category";
   const { slug } = useParams();
@@ -65,8 +67,7 @@ function CategorySlugPage() {
       </PageShell>
     );
 
-  const resolvedSlug = slugifyCategory(category);
-  const items = getProductsByCategorySlug(resolvedSlug);
+  const items = storefrontProducts.filter((product) => product.category === category);
 
   const others = categories
     .filter((title) => title !== "All" && title !== category)

@@ -10,6 +10,7 @@ import { resolveStore } from './middleware/storeMiddleware.js'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 dotenv.config({ path: path.resolve(__dirname, '.env') })
+const uploadsRoot = path.resolve(__dirname, 'uploads')
 import prisma from './lib/prisma.js'
 import productRoutes from './routes/productRoutes.js'
 import { categoryRouter, brandRouter } from './routes/productRoutes.js'
@@ -27,6 +28,7 @@ connectDB().catch((error) => {
 })
 
 const app = express()
+app.set('trust proxy', 'loopback')
 
 const allowedOrigins = new Set((process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:5174').split(',').map((origin) => origin.trim()).filter(Boolean))
 app.use(cors({
@@ -39,7 +41,7 @@ app.use(cors({
 app.use('/api/payments/razorpay/webhook', razorpayWebhookRoutes)
 app.use(express.json())
 app.use(morgan('dev'))
-app.use('/uploads', express.static('uploads'))
+app.use('/uploads', express.static(uploadsRoot))
 app.use('/api/integrations/courier-events', courierEventsRoutes)
 app.use('/api', resolveStore)
 app.use('/api', csrfMiddleware)
@@ -61,7 +63,7 @@ app.use(errorHandler)
 const PORT = process.env.PORT || 5000
 
 const startServer = async () => {
-  app.listen(PORT, () => {
+  app.listen(PORT, '127.0.0.1', () => {
     console.log(`\n🚀 House of Valerion Backend Server Started`)
     console.log(`📍 Server running on http://localhost:${PORT}`)
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`)

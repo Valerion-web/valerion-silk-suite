@@ -1,10 +1,17 @@
+import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import {
+  products as localProducts,
+  type BackendProductVariant,
+  type Product,
+} from "@/lib/products";
 
 export type HASTONVariant = {
   id: number;
   sku?: string;
   size?: string | null;
   color?: string | null;
+  colorCode?: string | null;
   priceOverride?: number | null;
   quantityOnHand?: number;
   status?: string;
@@ -64,15 +71,86 @@ export function mapHASTONProduct(product: any): HASTONProduct {
   };
 }
 
-async function getJSON(path: string) {
-  const response = await apiFetch(path);
+export function mapStorefrontProducts(
+  catalog: HASTONProduct[],
+  fallbackProducts: Product[] = localProducts,
+): Product[] {
+  const productsBySlug = new Map<string, HASTONProduct[]>();
+  for (const product of catalog) {
+    if (!product.slug) continue;
+    const matches = productsBySlug.get(product.slug) ?? [];
+    matches.push(product);
+    productsBySlug.set(product.slug, matches);
+  }
+
+  return fallbackProducts.map((fallback) => {
+    const matches = productsBySlug.get(fallback.id);
+    if (
+      matches?.length !== 1 ||
+      !Number.isSafeInteger(matches[0].id) ||
+      matches[0].id <= 0 ||
+      !matches[0].name
+    ) {
+      return fallback;
+    }
+
+    const product = matches[0];
+    return {
+      ...fallback,
+      name: product.name,
+      category: product.category?.name || fallback.category,
+      price: product.price,
+      image: product.image || fallback.image,
+      altImage: product.altImage || fallback.altImage,
+      colors: product.colors.length ? product.colors : fallback.colors,
+      sizes: product.sizes.length ? product.sizes : fallback.sizes,
+      fabric: product.material || fallback.fabric,
+      description: product.description || fallback.description,
+      rating: product.rating ?? fallback.rating,
+      reviews: product.reviews ?? fallback.reviews,
+      backendProductId: product.id,
+      backendVariants: product.variants,
+      availability: product.availability,
+      countInStock: product.countInStock,
+      images: product.images,
+    };
+  });
+}
+
+export function findVerifiedBackendVariant(
+  product: Product,
+  size?: string,
+  color?: string,
+): BackendProductVariant | null {
+  if (
+    !Number.isSafeInteger(product.backendProductId) ||
+    Number(product.backendProductId) <= 0 ||
+    !size ||
+    !color
+  ) {
+    return null;
+  }
+
+  const normalize = (value?: string | null) => value?.trim().toLowerCase() ?? "";
+  const matches = (product.backendVariants ?? []).filter(
+    (variant) =>
+      variant.status === "ACTIVE" &&
+      normalize(variant.size) === normalize(size) &&
+      [variant.color, variant.colorCode].some((option) => normalize(option) === normalize(color)),
+  );
+  if (matches.length !== 1) return null;
+  return Number.isSafeInteger(matches[0].id) && matches[0].id > 0 ? matches[0] : null;
+}
+
+async function getJSON(path: string, signal?: AbortSignal) {
+  const response = await apiFetch(path, { signal });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body?.message || `Unable to load products (${response.status})`);
   return body;
 }
 
-export async function fetchHASTONProducts(query = "") {
-  const body = await getJSON(`/api/products${query}`);
+export async function fetchHASTONProducts(query = "", signal?: AbortSignal) {
+  const body = await getJSON(`/api/products${query}`, signal);
   if (!Array.isArray(body)) throw new Error("Invalid product response");
   return body.map(mapHASTONProduct);
 }
@@ -80,4 +158,29 @@ export async function fetchHASTONProducts(query = "") {
 export async function fetchHASTONProduct(id: string | number) {
   if (!/^\d+$/.test(String(id))) throw new Error("Product not found");
   return mapHASTONProduct(await getJSON(`/api/products/${id}`));
+}
+
+export async function fetchStorefrontProducts(signal?: AbortSignal): Promise<Product[]> {
+  try {
+    return mapStorefrontProducts(await fetchHASTONProducts("", signal));
+  } catch (error) {
+    if (!(error instanceof Error && error.name === "AbortError")) {
+      console.error("[Catalog] Unable to load storefront products; using static catalog:", error);
+    }
+    return localProducts;
+  }
+}
+
+export function useStorefrontProducts() {
+  const [products, setProducts] = useState<Product[]>(localProducts);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchStorefrontProducts(controller.signal).then((catalog) => {
+      if (!controller.signal.aborted) setProducts(catalog);
+    });
+    return () => controller.abort();
+  }, []);
+
+  return products;
 }
